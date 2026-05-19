@@ -215,6 +215,30 @@ export function recordPoolDeploy(poolAddress, deployData) {
   log("pool-memory", `Recorded deploy for ${entry.name} (${poolAddress.slice(0, 8)}): PnL ${deploy.pnl_pct}%`);
 }
 
+export function markPoolSafetyBlocked(poolAddress, { poolName = null, hours = 0.5, reason = "safety block" } = {}) {
+  if (!poolAddress) return null;
+  const db = load();
+  if (!db[poolAddress]) {
+    db[poolAddress] = {
+      name: poolName || poolAddress.slice(0, 8),
+      base_mint: null,
+      deploys: [],
+      total_deploys: 0,
+      avg_pnl_pct: 0,
+      win_rate: 0,
+      adjusted_win_rate: 0,
+      adjusted_win_rate_sample_count: 0,
+      last_deployed_at: null,
+      last_outcome: null,
+      notes: [],
+    };
+  }
+  const cooldownUntil = setPoolCooldown(db[poolAddress], hours, reason);
+  save(db);
+  log("pool-memory", `Safety-block cooldown set for ${db[poolAddress].name} until ${cooldownUntil} (${reason})`);
+  return cooldownUntil;
+}
+
 export function isPoolOnCooldown(poolAddress) {
   if (!poolAddress) return false;
   const db = load();

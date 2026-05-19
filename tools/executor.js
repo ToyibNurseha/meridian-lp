@@ -14,7 +14,7 @@ import { studyTopLPers } from "./study.js";
 import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../lessons.js";
 import { setPositionInstruction } from "../state.js";
 
-import { getPoolMemory, addPoolNote } from "../pool-memory.js";
+import { getPoolMemory, addPoolNote, markPoolSafetyBlocked } from "../pool-memory.js";
 import { addStrategy, listStrategies, getStrategy, setActiveStrategy, removeStrategy } from "../strategy-library.js";
 import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../token-blacklist.js";
 import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist.js";
@@ -117,15 +117,14 @@ async function validateDeployPoolThresholds(args) {
   }
 
   const feeActiveTvlRatio = poolDetailFeeActiveTvlRatio(detail);
-  const minFeeActiveTvlRatio = numberOrNull(config.screening.minFeeActiveTvlRatio);
+  const volumeWindow = numberOrNull(detail?.volume);
   if (
-    minFeeActiveTvlRatio != null &&
-    minFeeActiveTvlRatio > 0 &&
-    (feeActiveTvlRatio == null || feeActiveTvlRatio < minFeeActiveTvlRatio)
+    (feeActiveTvlRatio == null || feeActiveTvlRatio === 0) &&
+    (volumeWindow == null || volumeWindow === 0)
   ) {
     return {
       pass: false,
-      reason: `Pool fee/active-TVL ${feeActiveTvlRatio ?? "unknown"}% is below configured minFeeActiveTvlRatio ${minFeeActiveTvlRatio}%.`,
+      reason: `Pool has zero fees AND zero volume in current window — pool dead. Skipping deploy.`,
     };
   }
 
@@ -573,6 +572,19 @@ export async function executeTool(name, args) {
     const safetyCheck = await runSafetyChecks(name, args);
     if (!safetyCheck.pass) {
       log("safety_block", `${name} blocked: ${safetyCheck.reason}`);
+      if (name === "deploy_position" && args?.pool_address) {
+        const transientReasons = [
+          "fee/active-TVL",
+          "volatility",
+        ];
+        if (transientReasons.some((needle) => safetyCheck.reason?.includes(needle))) {
+          markPoolSafetyBlocked(args.pool_address, {
+            poolName: args.pool_name || null,
+            hours: 0.5,
+            reason: safetyCheck.reason.slice(0, 120),
+          });
+        }
+      }
       return {
         blocked: true,
         reason: safetyCheck.reason,
