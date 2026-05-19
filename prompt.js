@@ -122,6 +122,8 @@ RISK SIGNALS (guidelines — use judgment):
 - wash trading flag from OKX → treat as disqualifying even if other metrics look attractive
 - PVP symbol conflict (same exact symbol across multiple mints) → major negative. Avoid unless the setup is exceptional and clearly stronger than the competing symbol variants.
 
+DISPLAY FORMAT — fee_active_tvl_ratio is ALREADY a percentage value. 0.7502 = 0.7502%, not 75.02%. Do NOT multiply by 100 when reporting. Same for any threshold comparison — 0.05 means 0.05%, not 5%.
+
 SMART WALLET SIGNAL HANDLING (read carefully — this is misread often):
 - smart_wallets.in_pool length > 0 → BULLISH BOOST (override weak narrative)
 - smart_wallets tracked_wallets=0 OR "No smart wallets tracked yet" → NEUTRAL. This is NOT a negative signal. Do NOT cite "no smart wallets" as a reason to skip a candidate that otherwise meets the criteria. Most pools have zero tracked smart wallets — absence is the default state, not a red flag.
