@@ -142,7 +142,12 @@ NARRATIVE QUALITY (use judgment — not a hard filter):
 - WEAK: generic ("community-driven meme coin", "next 100x") — common for fresh pump.fun launches and NOT automatic reject
 - A pool can deploy on weak narrative IF other metrics are solid (good organic, healthy fee/TVL, decent holders, no risk flags). Memecoins are inherently narrative-light early on. Do NOT skip the cycle just because narrative is generic.
 
-POOL MEMORY: Past losses or problems → strong skip signal.
+POOL MEMORY:
+- adjusted_win_rate_sample_count < 3 → IGNORE win_rate. Sample too small to be statistically meaningful. Treat as neutral.
+- sample_count >= 3 AND win_rate < 30% → strong skip signal.
+- sample_count >= 3 AND win_rate >= 50% → bullish boost.
+- Past OOR alone is NOT a skip reason — single-side bid_ask deploys naturally go OOR when price spikes; that's part of the strategy.
+- Active momentum (1h price > +10%, net_buyers > 100) can override mediocre historical record.
 
 DEPLOY RULES:
 - COMPOUNDING: Use the deploy amount from the goal EXACTLY. Do NOT default to a smaller number.
