@@ -175,18 +175,50 @@ function pushEvent(state, event) {
 }
 
 /**
- * Mark a position as closed.
+ * Mark a position as closed and remove it from active state.
+ * Audit trail preserved via pushEvent → recentEvents.
  */
 export function recordClose(position_address, reason) {
   const state = load();
   const pos = state.positions[position_address];
   if (!pos) return;
-  pos.closed = true;
-  pos.closed_at = new Date().toISOString();
-  pos.notes.push(`Closed at ${pos.closed_at}: ${reason}`);
-  pushEvent(state, { action: "close", position: position_address, pool_name: pos.pool_name || pos.pool, reason });
+  const closedAt = new Date().toISOString();
+  pushEvent(state, {
+    action: "close",
+    position: position_address,
+    pool: pos.pool || null,
+    pool_name: pos.pool_name || pos.pool,
+    pair: pos.pair || null,
+    amount_sol: pos.amount_sol ?? null,
+    deployed_at: pos.deployed_at || null,
+    closed_at: closedAt,
+    reason,
+  });
+  delete state.positions[position_address];
   save(state);
-  log("state", `Position ${position_address} marked closed: ${reason}`);
+  log("state", `Position ${position_address} closed + pruned: ${reason}`);
+}
+
+/**
+ * Prune any leftover positions that are marked closed but still sitting
+ * in state.positions. Run once at startup to clean up stale entries from
+ * before recordClose started deleting.
+ */
+export function pruneClosedPositions() {
+  const state = load();
+  const initial = Object.keys(state.positions || {}).length;
+  let removed = 0;
+  for (const [posId, pos] of Object.entries(state.positions || {})) {
+    if (pos?.closed) {
+      delete state.positions[posId];
+      removed++;
+    }
+  }
+  if (removed > 0) {
+    save(state);
+    log("state", `Startup prune: removed ${removed} closed positions (was ${initial}, now ${initial - removed})`);
+  }
+  return { initial, removed, remaining: initial - removed };
 }
 
 /**
