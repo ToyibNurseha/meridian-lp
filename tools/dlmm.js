@@ -1873,10 +1873,10 @@ export async function closePosition({ position_address, reason }) {
       const shouldRejectClosedPnl = (pct, closeReasonText) => {
         if (!Number.isFinite(pct)) return false;
         const reasonText = String(closeReasonText || "").toLowerCase();
-        const stopLossTriggered = reasonText.includes("stop loss");
+        const safetyTrigger = reasonText.includes("stop loss") || reasonText.includes("flash dump");
         // Meteora sometimes briefly reports absurd closed pnl while the record is settling.
-        // Trust legitimate stop-loss disasters, but reject obviously unsettled outliers otherwise.
-        return !stopLossTriggered && pct <= -90;
+        // Trust legitimate safety-trigger disasters, but reject obviously unsettled outliers otherwise.
+        return !safetyTrigger && pct <= -90;
       };
 
       // Fetch closed PnL from API — authoritative source after withdrawal settles

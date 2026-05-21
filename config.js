@@ -99,15 +99,18 @@ export const config = {
     oorCooldownTriggerCount: u.oorCooldownTriggerCount ?? 3,
     oorCooldownHours:       u.oorCooldownHours       ?? 12,
     repeatDeployCooldownEnabled: u.repeatDeployCooldownEnabled ?? true,
-    repeatDeployCooldownTriggerCount: u.repeatDeployCooldownTriggerCount ?? 3,
-    repeatDeployCooldownHours: u.repeatDeployCooldownHours ?? 12,
+    repeatDeployCooldownTriggerCount: u.repeatDeployCooldownTriggerCount ?? 2,
+    repeatDeployCooldownHours: u.repeatDeployCooldownHours ?? 24,
     repeatDeployCooldownScope: u.repeatDeployCooldownScope ?? "token", // pool | token | both
     repeatDeployCooldownMinFeeEarnedPct: u.repeatDeployCooldownMinFeeEarnedPct ?? u.repeatDeployCooldownMinFeeYieldPct ?? 0,
+    bigLossBlacklistPct:    u.bigLossBlacklistPct    ?? -10,  // pnl_pct threshold to trigger extended mint cooldown
+    bigLossBlacklistHours:  u.bigLossBlacklistHours  ?? 24,   // duration of extended mint cooldown after big loss
     minVolumeToRebalance:  u.minVolumeToRebalance  ?? 1000,
-    stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -50,
+    stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -15,
     takeProfitPct:         u.takeProfitPct         ?? u.takeProfitFeePct ?? 5,
     minFeePerTvl24h:       u.minFeePerTvl24h       ?? 7,
     minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 60, // minutes before low yield can trigger close
+    minClosePnlUsd:        u.minClosePnlUsd        ?? 0.20,  // gate LOW_YIELD close when |pnl_usd| below this
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,
@@ -117,6 +120,10 @@ export const config = {
     trailingTriggerPct:    u.trailingTriggerPct    ?? 3,    // activate trailing at X% PnL
     trailingDropPct:       u.trailingDropPct       ?? 1.5,  // close when drops X% from peak
     pnlSanityMaxDiffPct:   u.pnlSanityMaxDiffPct   ?? 5,    // max allowed diff between reported and derived pnl % before ignoring a tick
+    // Flash dump detector — force-close on rapid PnL drop within short window
+    flashDumpEnabled:      u.flashDumpEnabled      ?? true,
+    flashDumpDropPct:      u.flashDumpDropPct      ?? 5,    // PnL drop ≥ this within window triggers close
+    flashDumpWindowMin:    u.flashDumpWindowMin    ?? 5,    // rolling window in minutes
     // SOL mode — positions, PnL, and balances reported in SOL instead of USD
     solMode:               u.solMode               ?? false,
   },

@@ -22,6 +22,37 @@ let _liveMessageDepth = 0;
 let _warnedMissingChatId = false;
 let _warnedMissingAllowedUsers = false;
 
+// Track last edit payload per message_id to skip identical edits that would yield
+// Telegram "message is not modified" 400 errors.
+const _lastEditSnapshot = new Map();
+const MAX_EDIT_SNAPSHOTS = 200;
+
+function snapshotKey(messageId) {
+  return String(messageId);
+}
+
+function makeEditFingerprint(body) {
+  try {
+    return JSON.stringify({
+      text: body.text ?? "",
+      reply_markup: body.reply_markup ?? null,
+      parse_mode: body.parse_mode ?? null,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function rememberEditFingerprint(messageId, fp) {
+  if (!fp) return;
+  const key = snapshotKey(messageId);
+  _lastEditSnapshot.set(key, fp);
+  if (_lastEditSnapshot.size > MAX_EDIT_SNAPSHOTS) {
+    const firstKey = _lastEditSnapshot.keys().next().value;
+    _lastEditSnapshot.delete(firstKey);
+  }
+}
+
 // ─── chatId persistence ──────────────────────────────────────────
 function loadChatId() {
   try {
@@ -93,7 +124,10 @@ async function postTelegram(method, body) {
     });
     if (!res.ok) {
       const err = await res.text();
-      log("telegram_error", `${method} ${res.status}: ${err.slice(0, 200)}`);
+      // Suppress harmless "message is not modified" 400 from editMessageText.
+      if (!(method === "editMessageText" && res.status === 400 && err.includes("message is not modified"))) {
+        log("telegram_error", `${method} ${res.status}: ${err.slice(0, 200)}`);
+      }
       return null;
     }
     return await res.json();
@@ -143,19 +177,29 @@ export async function sendHTML(html) {
 
 export async function editMessage(text, messageId) {
   if (!TOKEN || !chatId || !messageId) return null;
-  return postTelegram("editMessageText", {
+  const body = {
     message_id: messageId,
     text: String(text).slice(0, 4096),
-  });
+  };
+  const fp = makeEditFingerprint(body);
+  if (fp && _lastEditSnapshot.get(snapshotKey(messageId)) === fp) return null;
+  const res = await postTelegram("editMessageText", body);
+  if (res?.ok !== false) rememberEditFingerprint(messageId, fp);
+  return res;
 }
 
 export async function editMessageWithButtons(text, messageId, inlineKeyboard) {
   if (!TOKEN || !chatId || !messageId) return null;
-  return postTelegram("editMessageText", {
+  const body = {
     message_id: messageId,
     text: String(text).slice(0, 4096),
     reply_markup: { inline_keyboard: inlineKeyboard },
-  });
+  };
+  const fp = makeEditFingerprint(body);
+  if (fp && _lastEditSnapshot.get(snapshotKey(messageId)) === fp) return null;
+  const res = await postTelegram("editMessageText", body);
+  if (res?.ok !== false) rememberEditFingerprint(messageId, fp);
+  return res;
 }
 
 export async function answerCallbackQuery(callbackQueryId, text = "") {

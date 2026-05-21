@@ -185,6 +185,25 @@ export function recordPoolDeploy(poolAddress, deployData) {
     }
   }
 
+  // ── Big-loss blacklist: extend mint cooldown when a single close craters ──
+  const bigLossPct = Number(config.management.bigLossBlacklistPct ?? -10);
+  const bigLossHours = Math.max(0, Number(config.management.bigLossBlacklistHours ?? 24));
+  if (
+    bigLossHours > 0 &&
+    Number.isFinite(deploy.pnl_pct) &&
+    deploy.pnl_pct <= bigLossPct
+  ) {
+    const reason = `big loss (${deploy.pnl_pct.toFixed(2)}% <= ${bigLossPct}%)`;
+    const poolCooldownUntil = setPoolCooldown(entry, bigLossHours, reason);
+    log("pool-memory", `Cooldown set for ${entry.name} until ${poolCooldownUntil} (${reason})`);
+    if (entry.base_mint) {
+      const mintCooldownUntil = setBaseMintCooldown(db, entry.base_mint, bigLossHours, reason);
+      if (mintCooldownUntil) {
+        log("pool-memory", `Base mint cooldown set for ${entry.base_mint.slice(0, 8)} until ${mintCooldownUntil} (${reason})`);
+      }
+    }
+  }
+
   if (config.management.repeatDeployCooldownEnabled) {
     const triggerCount = Math.max(1, Number(config.management.repeatDeployCooldownTriggerCount ?? 3));
     const cooldownHours = Math.max(0, Number(config.management.repeatDeployCooldownHours ?? 12));

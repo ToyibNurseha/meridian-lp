@@ -23,6 +23,7 @@ signal-weights.json
 
 # Logs
 logs/
+vps-snapshot/
 
 # OS
 .DS_Store

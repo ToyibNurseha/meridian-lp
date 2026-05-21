@@ -104,6 +104,7 @@ export function trackPosition({
     confirmed_trailing_exit_reason: null,
     confirmed_trailing_exit_until: null,
     trailing_active: false,
+    pnl_history: [], // rolling samples [{ ts, pnl_pct }] used by flash-dump detector
   };
   pushEvent(state, { action: "deploy", position, pool_name: pool_name || pool });
   save(state);
@@ -402,10 +403,20 @@ export function getStateSummary() {
  * Returns { action, reason } or null if no exit needed.
  */
 export function updatePnlAndCheckExits(position_address, positionData, mgmtConfig) {
-  const { pnl_pct: currentPnlPct, pnl_pct_suspicious, in_range, fee_per_tvl_24h } = positionData;
+  const { pnl_pct: currentPnlPct, pnl_pct_suspicious, pnl_usd, in_range, fee_per_tvl_24h } = positionData;
   const state = load();
   const pos = state.positions[position_address];
   if (!pos || pos.closed) return null;
+
+  // Append rolling PnL sample for flash-dump detection (only when value is trustworthy)
+  if (!pnl_pct_suspicious && currentPnlPct != null) {
+    if (!Array.isArray(pos.pnl_history)) pos.pnl_history = [];
+    const nowMs = Date.now();
+    const windowMin = Math.max(1, Number(mgmtConfig.flashDumpWindowMin ?? 5));
+    const cutoff = nowMs - windowMin * 60 * 1000;
+    pos.pnl_history.push({ ts: nowMs, pnl_pct: currentPnlPct });
+    pos.pnl_history = pos.pnl_history.filter((s) => s.ts >= cutoff).slice(-60);
+  }
 
   if (pos.confirmed_trailing_exit_until) {
     if (new Date(pos.confirmed_trailing_exit_until).getTime() > Date.now() && pos.confirmed_trailing_exit_reason) {
@@ -440,6 +451,26 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   }
 
   if (changed) save(state);
+
+  // ── Flash dump (rapid PnL drop within rolling window) ─────────
+  if (
+    mgmtConfig.flashDumpEnabled &&
+    !pnl_pct_suspicious &&
+    currentPnlPct != null &&
+    Array.isArray(pos.pnl_history) &&
+    pos.pnl_history.length >= 2
+  ) {
+    const dropPct = Number(mgmtConfig.flashDumpDropPct ?? 5);
+    const windowMin = Math.max(1, Number(mgmtConfig.flashDumpWindowMin ?? 5));
+    const recentMax = pos.pnl_history.reduce((m, s) => (s.pnl_pct > m ? s.pnl_pct : m), -Infinity);
+    const drop = recentMax - currentPnlPct;
+    if (drop >= dropPct) {
+      return {
+        action: "FLASH_DUMP",
+        reason: `Flash dump: PnL ${recentMax.toFixed(2)}% → ${currentPnlPct.toFixed(2)}% (dropped ${drop.toFixed(2)}% within ${windowMin}m)`,
+      };
+    }
+  }
 
   // ── Stop loss ──────────────────────────────────────────────────
   if (!pnl_pct_suspicious && currentPnlPct != null && mgmtConfig.stopLossPct != null && currentPnlPct <= mgmtConfig.stopLossPct) {
@@ -484,10 +515,15 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     fee_per_tvl_24h < mgmtConfig.minFeePerTvl24h &&
     (age_minutes == null || age_minutes >= minAgeForYieldCheck)
   ) {
-    return {
-      action: "LOW_YIELD",
-      reason: `Low yield: fee/TVL ${fee_per_tvl_24h.toFixed(2)}% < min ${mgmtConfig.minFeePerTvl24h}% (age: ${age_minutes ?? "?"}m)`,
-    };
+    const minCloseAbs = Number(mgmtConfig.minClosePnlUsd ?? 0);
+    if (minCloseAbs > 0 && pnl_usd != null && Math.abs(pnl_usd) < minCloseAbs) {
+      log("state", `Position ${position_address} LOW_YIELD exit deferred: |pnl_usd $${pnl_usd.toFixed(3)}| < min $${minCloseAbs.toFixed(2)}`);
+    } else {
+      return {
+        action: "LOW_YIELD",
+        reason: `Low yield: fee/TVL ${fee_per_tvl_24h.toFixed(2)}% < min ${mgmtConfig.minFeePerTvl24h}% (age: ${age_minutes ?? "?"}m)`,
+      };
+    }
   }
 
   return null;
