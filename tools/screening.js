@@ -842,6 +842,58 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       return true;
     }));
 
+    // Holder concentration hard filter — pre-fetch so LLM doesn't waste cycles
+    // on pools with permanent disqualifiers. Static rejects also cooldown the
+    // base mint so the same pool doesn't resurface every cycle.
+    if (eligible.length > 0) {
+      const { getTokenHolders } = await import("./token.js");
+      const { cooldownBaseMint } = await import("../pool-memory.js");
+      const cooldownHours = Number(config.screening.staticRejectCooldownHours ?? 24);
+      const maxTop10 = Number(config.screening.maxTop10Pct ?? 100);
+      const maxBots  = Number(config.screening.maxBotHoldersPct ?? 100);
+
+      const holderResults = await Promise.allSettled(
+        eligible.map((p) =>
+          p.base?.mint
+            ? getTokenHolders({ mint: p.base.mint, limit: 20 })
+            : Promise.resolve(null)
+        )
+      );
+
+      const survivors = [];
+      for (let i = 0; i < eligible.length; i++) {
+        const p = eligible[i];
+        const r = holderResults[i];
+        if (r.status !== "fulfilled" || !r.value) {
+          survivors.push(p);
+          continue;
+        }
+        const top10 = Number(r.value.top_10_real_holders_pct ?? 0);
+        const botsPct = r.value.bot_holders_pct;
+        p.top10_pct = top10;
+        p.bot_holders_pct = botsPct;
+
+        if (Number.isFinite(top10) && top10 > maxTop10) {
+          const reason = `top10 concentration ${top10.toFixed(2)}% > maxTop10Pct ${maxTop10}%`;
+          log("screening", `Static reject: ${p.name} — ${reason}`);
+          pushFilteredReason(filteredOut, p, reason);
+          cooldownBaseMint(p.base.mint, cooldownHours, reason);
+          continue;
+        }
+        if (botsPct != null && Number.isFinite(botsPct) && botsPct > maxBots) {
+          const reason = `bot holders ${botsPct.toFixed(2)}% > maxBotHoldersPct ${maxBots}%`;
+          log("screening", `Static reject: ${p.name} — ${reason}`);
+          pushFilteredReason(filteredOut, p, reason);
+          cooldownBaseMint(p.base.mint, cooldownHours, reason);
+          continue;
+        }
+        survivors.push(p);
+      }
+      const dropped = eligible.length - survivors.length;
+      eligible.splice(0, eligible.length, ...survivors);
+      if (dropped > 0) log("screening", `Holder concentration filter removed ${dropped} pool(s); base mints cooldowned for ${cooldownHours}h`);
+    }
+
     // ATH filter — drop pools where price is too close to ATH
     const athFilter = config.screening.athFilterPct;
     if (athFilter != null) {
