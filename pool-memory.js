@@ -69,13 +69,41 @@ function setPoolCooldown(entry, hours, reason) {
 function setBaseMintCooldown(db, baseMint, hours, reason) {
   if (!baseMint) return null;
   const cooldownUntil = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+  let touched = false;
   for (const entry of Object.values(db)) {
     if (entry?.base_mint === baseMint) {
       entry.base_mint_cooldown_until = cooldownUntil;
       entry.base_mint_cooldown_reason = reason;
+      touched = true;
     }
   }
+  // No existing pool entry references this mint — create a synthetic
+  // mint-only entry so future screening cycles see the cooldown.
+  if (!touched) {
+    const syntheticKey = `__mint_${baseMint}`;
+    db[syntheticKey] = {
+      ...(db[syntheticKey] || {}),
+      base_mint: baseMint,
+      base_mint_cooldown_until: cooldownUntil,
+      base_mint_cooldown_reason: reason,
+      synthetic: true,
+    };
+  }
   return cooldownUntil;
+}
+
+/**
+ * Cooldown a base mint for static-reject reasons (top10 concentration,
+ * bot-holder ratio, etc). Persists across screening cycles so the LLM
+ * doesn't see the same disqualified pool repeatedly.
+ */
+export function cooldownBaseMint(baseMint, hours, reason) {
+  if (!baseMint) return null;
+  const db = load();
+  const until = setBaseMintCooldown(db, baseMint, hours, reason);
+  save(db);
+  log("pool-memory", `Static cooldown: ${baseMint.slice(0, 8)} for ${hours}h — ${reason}`);
+  return until;
 }
 
 // ─── Write ─────────────────────────────────────────────────────

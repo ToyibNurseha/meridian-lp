@@ -197,6 +197,9 @@ export async function getTokenHolders({ mint, limit = 20 }) {
     total_fetched: holders.length,
     showing: mapped.length,
     top_10_real_holders_pct: top10Pct.toFixed(2),
+    bot_holders_pct: tokenInfo?.audit?.botHoldersPercentage != null
+      ? Number(tokenInfo.audit.botHoldersPercentage.toFixed(2))
+      : null,
     // OKX advanced info
     risk_level:     advancedData?.risk_level     ?? null,  // 1=low..5=high
     bundle_pct:     advancedData?.bundle_pct     ?? null,
