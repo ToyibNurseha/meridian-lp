@@ -764,6 +764,20 @@ Summarize the current portfolio health, total fees earned, and performance of al
     await maybeRunMissedBriefing();
   }, { timezone: 'UTC' });
 
+  // Daily — refresh smart-wallets from Dune DLMM PnL leaderboard. Skipped if no key.
+  const smartWalletRefreshTask = cron.schedule(`30 0 * * *`, async () => {
+    if (!process.env.DUNE_API_KEY) return;
+    log("cron", "Refreshing smart-wallets from Dune leaderboard");
+    try {
+      const { spawn } = await import("child_process");
+      const child = spawn("node", [path.resolve(path.dirname(fileURLToPath(import.meta.url)), "scripts/refresh-smart-wallets.js")], { stdio: "pipe" });
+      child.stdout.on("data", (d) => log("smart_wallets", d.toString().trim()));
+      child.stderr.on("data", (d) => log("smart_wallets", `err: ${d.toString().trim()}`));
+    } catch (error) {
+      log("cron_error", `Smart-wallets refresh failed: ${error.message}`);
+    }
+  }, { timezone: 'UTC' });
+
   // Lightweight 30s PnL poller — updates trailing TP state between management cycles, no LLM
   let _pnlPollBusy = false;
   const pnlPollInterval = setInterval(async () => {
@@ -819,7 +833,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
     }
   }, 30_000);
 
-  _cronTasks = [mgmtTask, screenTask, healthTask, briefingTask, briefingWatchdog];
+  _cronTasks = [mgmtTask, screenTask, healthTask, briefingTask, briefingWatchdog, smartWalletRefreshTask];
   // Store interval ref so stopCronJobs can clear it
   _cronTasks._pnlPollInterval = pnlPollInterval;
   log("cron", `Cycles started — management every ${config.schedule.managementIntervalMin}m, screening every ${config.schedule.screeningIntervalMin}m`);

@@ -5,6 +5,7 @@ import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { confirmIndicatorPreset } from "./chart-indicators.js";
 import { getAgentMeridianBase, getAgentMeridianHeaders } from "./agent-meridian.js";
+import { getGeckoSignalMap } from "./gecko.js";
 
 const DATAPI_JUP = "https://datapi.jup.ag/v1";
 
@@ -35,7 +36,14 @@ function scoreCandidate(pool) {
   const organic = Number(pool.organic_score || 0);
   const volume = Number(pool.volume_window || 0);
   const holders = Number(pool.holders || 0);
-  return feeTvl * 1000 + organic * 10 + volume / 100 + holders / 100;
+  const base = feeTvl * 1000 + organic * 10 + volume / 100 + holders / 100;
+  // Cross-validation boost: pool appearing in GeckoTerminal trending/new is a 2nd-source signal
+  const geckoBoost = pool.gecko_signal === "both" ? 200 : pool.gecko_signal ? 100 : 0;
+  // Bitquery boost: fresh pool detected at creation = first-mover edge
+  const bitqueryBoost = pool.bitquery_signal ? 150 : 0;
+  // Helius boost: smart wallet opened a position here — strongest signal. Scales with signer count.
+  const heliusBoost = pool.helius_signal ? 300 + (Array.isArray(pool.helius_signers) ? pool.helius_signers.length * 50 : 0) : 0;
+  return base + geckoBoost + bitqueryBoost + heliusBoost;
 }
 
 function numeric(value) {
@@ -152,6 +160,69 @@ async function fetchDiscordSignalCandidates() {
   if (!res.ok) throw new Error(`discord signal candidates ${res.status}`);
   const data = await res.json();
   return Array.isArray(data?.candidates) ? data.candidates : [];
+}
+
+async function fetchHeliusSignalCandidates({ maxAgeMinutes = 30, limit = 20 } = {}) {
+  const fs = await import("fs");
+  const path = await import("path");
+  const { fileURLToPath } = await import("url");
+  const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../helius-signals.json");
+  if (!fs.existsSync(file)) return [];
+
+  let signals;
+  try { signals = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return []; }
+  if (!Array.isArray(signals)) return [];
+
+  const cutoff = Date.now() - maxAgeMinutes * 60_000;
+  const recent = signals
+    .filter((s) => Array.isArray(s?.candidate_pool_addresses) && new Date(s.queued_at).getTime() >= cutoff)
+    .slice(0, limit);
+  if (recent.length === 0) return [];
+
+  // Aggregate: for each candidate pool address, collect signers that touched it
+  const byAddress = new Map();
+  for (const s of recent) {
+    for (const addr of s.candidate_pool_addresses) {
+      if (!addr) continue;
+      const entry = byAddress.get(addr) || { signers: new Set(), latestAt: 0 };
+      entry.signers.add(s.signer);
+      entry.latestAt = Math.max(entry.latestAt, new Date(s.queued_at).getTime());
+      byAddress.set(addr, entry);
+    }
+  }
+  return Array.from(byAddress.entries()).map(([address, info]) => ({
+    address,
+    signers: Array.from(info.signers),
+    latest_at: new Date(info.latestAt).toISOString(),
+  }));
+}
+
+async function fetchBitquerySignalCandidates({ maxAgeMinutes = 60, limit = 10 } = {}) {
+  const fs = await import("fs");
+  const path = await import("path");
+  const { fileURLToPath } = await import("url");
+  const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../bitquery-signals.json");
+  if (!fs.existsSync(file)) return [];
+
+  let signals;
+  try { signals = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return []; }
+  if (!Array.isArray(signals)) return [];
+
+  const cutoff = Date.now() - maxAgeMinutes * 60_000;
+  const recent = signals
+    .filter((s) => s?.pool_address && s.status !== "consumed" && new Date(s.queued_at).getTime() >= cutoff)
+    .slice(0, limit);
+  if (recent.length === 0) return [];
+
+  const details = await Promise.allSettled(
+    recent.map((s) => fetchPoolDiscoveryDetail({ poolAddress: s.pool_address, timeframe: config.screening.timeframe }))
+  );
+
+  return recent.map((s, i) => {
+    const detail = details[i].status === "fulfilled" ? details[i].value : null;
+    if (!detail) return null;
+    return { signal: s, discovery_pool: detail };
+  }).filter(Boolean);
 }
 
 async function fetchPoolDiscoveryPage({ page_size, filters, timeframe, category }) {
@@ -417,8 +488,100 @@ export async function discoverPools({
     }
   }
 
+  if (config.screening.useHeliusSignals !== false) {
+    const heliusSignals = await fetchHeliusSignalCandidates().catch((error) => {
+      log("screening", `Helius signal fetch failed: ${error.message}`);
+      return [];
+    });
+    if (heliusSignals.length > 0) {
+      const byPool = new Map(rawPools.map((p) => [p.pool_address, p]));
+      const unmatched = [];
+      let tagged = 0;
+      for (const sig of heliusSignals) {
+        if (byPool.has(sig.address)) {
+          Object.assign(byPool.get(sig.address), {
+            helius_signal: true,
+            helius_signers: sig.signers,
+            helius_signal_at: sig.latest_at,
+          });
+          tagged++;
+        } else {
+          unmatched.push(sig);
+        }
+      }
+      if (unmatched.length > 0) {
+        const details = await Promise.allSettled(
+          unmatched.map((sig) => fetchPoolDiscoveryDetail({ poolAddress: sig.address, timeframe: s.timeframe }))
+        );
+        let injected = 0;
+        for (let i = 0; i < unmatched.length; i++) {
+          const detail = details[i].status === "fulfilled" ? details[i].value : null;
+          if (!detail?.pool_address) continue;
+          byPool.set(detail.pool_address, {
+            ...detail,
+            helius_signal: true,
+            helius_signers: unmatched[i].signers,
+            helius_signal_at: unmatched[i].latest_at,
+          });
+          injected++;
+        }
+        if (injected > 0) log("screening", `Helius: injected ${injected} smart-wallet pool(s) not in trending`);
+      }
+      rawPools = Array.from(byPool.values());
+      if (tagged > 0) log("screening", `Helius: ${tagged} trending pool(s) also touched by smart wallets`);
+    }
+  }
+
+  if (config.screening.useBitquerySignals !== false) {
+    const bitquerySignals = await fetchBitquerySignalCandidates().catch((error) => {
+      log("screening", `Bitquery signal fetch failed: ${error.message}`);
+      return [];
+    });
+    if (bitquerySignals.length > 0) {
+      const byPool = new Map(rawPools.map((p) => [p.pool_address, p]));
+      let added = 0;
+      for (const { signal, discovery_pool } of bitquerySignals) {
+        const enriched = {
+          ...discovery_pool,
+          bitquery_signal: true,
+          bitquery_signal_at: signal.queued_at,
+          bitquery_signer: signal.signer || null,
+        };
+        if (byPool.has(discovery_pool.pool_address)) {
+          Object.assign(byPool.get(discovery_pool.pool_address), {
+            bitquery_signal: true,
+            bitquery_signal_at: signal.queued_at,
+            bitquery_signer: signal.signer || null,
+          });
+        } else {
+          byPool.set(discovery_pool.pool_address, enriched);
+          added++;
+        }
+      }
+      rawPools = Array.from(byPool.values());
+      if (added > 0) log("screening", `Bitquery: added ${added} fresh pool(s) not in trending list`);
+    }
+  }
+
   rawPools = await applyVolatilityTimeframe(rawPools, s.timeframe);
   await enrichDiscordSignalLaunchpads(rawPools);
+
+  if (config.screening.useGeckoSignals !== false) {
+    try {
+      const geckoMap = await getGeckoSignalMap();
+      let tagged = 0;
+      for (const pool of rawPools) {
+        const signal = geckoMap.get(pool?.pool_address);
+        if (signal) {
+          pool.gecko_signal = signal;
+          tagged++;
+        }
+      }
+      if (tagged > 0) log("screening", `Gecko cross-validation: ${tagged} pool(s) also trending/new on GeckoTerminal`);
+    } catch (error) {
+      log("screening", `Gecko signal fetch failed: ${error.message}`);
+    }
+  }
 
   const filteredExamples = [];
   const thresholdedRawPools = rawPools.filter((pool) => {
@@ -771,6 +934,12 @@ function condensePool(p) {
     discord_signal_count: p.discord_signal_count || 0,
     discord_signal_seen_count: p.discord_signal_seen_count || 0,
     discord_signal_last_seen_at: p.discord_signal_last_seen_at || null,
+    gecko_signal: p.gecko_signal || null,
+    bitquery_signal: Boolean(p.bitquery_signal),
+    bitquery_signal_at: p.bitquery_signal_at || null,
+    helius_signal: Boolean(p.helius_signal),
+    helius_signers: p.helius_signers || null,
+    helius_signal_at: p.helius_signal_at || null,
 
     // Price action
     price: p.pool_price,

@@ -78,6 +78,9 @@ export const config = {
     minTokenFeesSol:   u.minTokenFeesSol   ?? 30,  // global fees paid (priority+jito tips). below = bundled/scam
     useDiscordSignals: u.useDiscordSignals ?? false,
     discordSignalMode: u.discordSignalMode ?? "merge", // merge | only
+    useGeckoSignals:   u.useGeckoSignals   ?? true,    // cross-validate with GeckoTerminal trending/new
+    useBitquerySignals: u.useBitquerySignals ?? true,  // pull fresh pool creations from bitquery-signals.json
+    useHeliusSignals:   u.useHeliusSignals  ?? true,   // pull smart-wallet position-opens from helius-signals.json
     avoidPvpSymbols:   u.avoidPvpSymbols   ?? true, // avoid exact-symbol rivals with real active pools
     blockPvpSymbols:   u.blockPvpSymbols   ?? false, // hard-filter PVP rivals before the LLM sees them
     maxBundlePct:      u.maxBundlePct      ?? 30,  // max bundle holding % (OKX advanced-info)
