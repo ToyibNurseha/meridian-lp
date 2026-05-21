@@ -722,6 +722,7 @@ export function getPerformanceHistory({ hours = 24, limit = 50 } = {}) {
       pnl_usd: r.pnl_usd,
       pnl_pct: r.pnl_pct,
       fees_earned_usd: r.fees_earned_usd,
+      fees_earned_sol: r.fees_earned_sol,
       range_efficiency: r.range_efficiency,
       minutes_held: r.minutes_held,
       close_reason: r.close_reason,
@@ -729,12 +730,22 @@ export function getPerformanceHistory({ hours = 24, limit = 50 } = {}) {
     }));
 
   const totalPnl = filtered.reduce((s, r) => s + (r.pnl_usd ?? 0), 0);
+  const totalFeesSol = filtered.reduce((s, r) => s + (r.fees_earned_sol ?? 0), 0);
+  const totalFeesUsd = filtered.reduce((s, r) => s + (r.fees_earned_usd ?? 0), 0);
   const wins = filtered.filter((r) => r.pnl_usd > 0).length;
+  // Solana priority+base fee rough estimate per close (claim + close + auto-swap → ~3 tx).
+  // Calibrated against May 19–21 sample where wallet delta - realized PnL ≈ -$3.40 across 21 closes.
+  const estGasSolPerClose = 0.0015;
+  const estGasSolBurn = filtered.length * estGasSolPerClose;
 
   return {
     hours,
     count: filtered.length,
     total_pnl_usd: Math.round(totalPnl * 100) / 100,
+    total_fees_usd: Math.round(totalFeesUsd * 100) / 100,
+    total_fees_sol: Math.round(totalFeesSol * 1e6) / 1e6,
+    est_gas_sol_burn: Math.round(estGasSolBurn * 1e6) / 1e6,
+    est_gas_per_close_sol: estGasSolPerClose,
     win_rate_pct: filtered.length > 0 ? Math.round((wins / filtered.length) * 100) : null,
     positions: filtered,
   };

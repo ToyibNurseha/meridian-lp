@@ -387,6 +387,12 @@ const toolMap = {
       gasReserve: ["management", "gasReserve"],
       positionSizePct: ["management", "positionSizePct"],
       minAgeBeforeYieldCheck: ["management", "minAgeBeforeYieldCheck"],
+      minClosePnlUsd: ["management", "minClosePnlUsd"],
+      bigLossBlacklistPct: ["management", "bigLossBlacklistPct"],
+      bigLossBlacklistHours: ["management", "bigLossBlacklistHours"],
+      flashDumpEnabled: ["management", "flashDumpEnabled"],
+      flashDumpDropPct: ["management", "flashDumpDropPct"],
+      flashDumpWindowMin: ["management", "flashDumpWindowMin"],
       // risk
       maxPositions: ["risk", "maxPositions"],
       maxDeployAmount: ["risk", "maxDeployAmount"],
