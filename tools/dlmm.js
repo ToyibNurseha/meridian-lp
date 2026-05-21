@@ -2005,6 +2005,11 @@ export async function closePosition({ position_address, reason }) {
         txs: txHashes,
         pnl_usd: pnlUsd,
         pnl_pct: pnlPct,
+        fees_usd: feesUsd,
+        fees_sol: feesSol,
+        initial_usd: initialUsd,
+        final_usd: finalValueUsd,
+        tx_count: txHashes.length,
         base_mint: closeBaseMint,
       };
     }
