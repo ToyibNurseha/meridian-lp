@@ -764,17 +764,35 @@ Summarize the current portfolio health, total fees earned, and performance of al
     await maybeRunMissedBriefing();
   }, { timezone: 'UTC' });
 
-  // Daily — discover top LPers from on-chain Meteora position accounts.
-  // Aggregates wallets active across multiple hot pools → smart-wallets.json.
+  // Daily — discover top LPers + sync Helius webhook address list.
+  // 1. discover-lpers.js refreshes smart-wallets.json from on-chain position data
+  // 2. setup-helius-webhook.js updates Helius webhook subscription with new list
   const smartWalletRefreshTask = cron.schedule(`30 0 * * *`, async () => {
-    log("cron", "Discovering top LPers from on-chain position accounts");
+    const { spawn } = await import("child_process");
+    const scriptsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "scripts");
+
+    const runScript = (file, tag) => new Promise((resolve) => {
+      log("cron", `Running ${file}`);
+      const child = spawn("node", [path.join(scriptsDir, file)], { stdio: "pipe" });
+      child.stdout.on("data", (d) => log(tag, d.toString().trim()));
+      child.stderr.on("data", (d) => log(tag, `err: ${d.toString().trim()}`));
+      child.on("close", (code) => resolve(code ?? 0));
+    });
+
     try {
-      const { spawn } = await import("child_process");
-      const child = spawn("node", [path.resolve(path.dirname(fileURLToPath(import.meta.url)), "scripts/discover-lpers.js")], { stdio: "pipe" });
-      child.stdout.on("data", (d) => log("smart_wallets", d.toString().trim()));
-      child.stderr.on("data", (d) => log("smart_wallets", `err: ${d.toString().trim()}`));
+      const discoverCode = await runScript("discover-lpers.js", "smart_wallets");
+      if (discoverCode !== 0) {
+        log("cron_error", `discover-lpers exited ${discoverCode} — skipping webhook sync`);
+        return;
+      }
+      // Only update Helius webhook if both ID and URL exist (avoid creating duplicates)
+      if (process.env.HELIUS_WEBHOOK_ID && process.env.HELIUS_WEBHOOK_URL && process.env.HELIUS_API_KEY) {
+        await runScript("setup-helius-webhook.js", "helius_sync");
+      } else {
+        log("cron", "Helius webhook env not fully set — skipping webhook sync");
+      }
     } catch (error) {
-      log("cron_error", `LPer discovery failed: ${error.message}`);
+      log("cron_error", `Daily LPer refresh failed: ${error.message}`);
     }
   }, { timezone: 'UTC' });
 
