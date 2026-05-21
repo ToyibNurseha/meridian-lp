@@ -502,13 +502,32 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
   );
 }
 
-export async function notifyClose({ pair, pnlUsd, pnlPct }) {
+// Estimated all-in gas (lamports → SOL) per close cycle: claim + remove liquidity +
+// close + auto-swap, including Jito tip/priority. Tuned against May 2026 sample
+// where wallet SOL delta - realized USD PnL ≈ -$3.40 over 21 closes.
+const GAS_SOL_PER_TX = 0.0005;
+const SOL_USD_FALLBACK = 85;
+
+export async function notifyClose({ pair, pnlUsd, pnlPct, feesUsd = 0, initialUsd = 0, finalUsd = 0, txCount = 0 }) {
   if (hasActiveLiveMessage()) return;
   const sign = pnlUsd >= 0 ? "+" : "";
-  await sendHTML(
-    `🔒 <b>Closed</b> ${pair}\n` +
-    `PnL: ${sign}$${(pnlUsd ?? 0).toFixed(2)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)`
-  );
+  const ilUsd = (finalUsd ?? 0) - (initialUsd ?? 0); // negative = IL on principal
+  const gasSol = (txCount || 3) * GAS_SOL_PER_TX;
+  const gasUsd = gasSol * SOL_USD_FALLBACK;
+  const netUsd = (pnlUsd ?? 0) - gasUsd;
+  const netSign = netUsd >= 0 ? "+" : "";
+
+  const lines = [
+    `🔒 <b>Closed</b> ${pair}`,
+    `PnL: ${sign}$${(pnlUsd ?? 0).toFixed(2)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)`,
+  ];
+  if (feesUsd || initialUsd) {
+    lines.push(`Fees: $${(feesUsd ?? 0).toFixed(2)} | IL: ${ilUsd >= 0 ? "+" : ""}$${ilUsd.toFixed(2)}`);
+  }
+  lines.push(`Gas est: ~$${gasUsd.toFixed(2)} (◎${gasSol.toFixed(4)}, ${txCount || 3} tx)`);
+  lines.push(`<b>Net: ${netSign}$${netUsd.toFixed(2)}</b>`);
+
+  await sendHTML(lines.join("\n"));
 }
 
 export async function notifySwap({ inputSymbol, outputSymbol, amountIn, amountOut, tx }) {

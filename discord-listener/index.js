@@ -118,14 +118,22 @@ client.on("ready", () => {
   console.log(`\nStreaming messages... (Ctrl+C to stop)\n`);
 });
 
+const TARGET_BOT_NAME = process.env.DISCORD_TARGET_BOT_NAME || "Metlex Pool Bot";
+const DEBUG_AUTHORS = process.env.DISCORD_DEBUG_AUTHORS === "1";
+
 client.on("messageCreate", async (message) => {
   // Only process messages from configured guild + channels
   if (message.guildId !== GUILD_ID) return;
   if (!CHANNEL_IDS.includes(message.channelId)) return;
   // Skip own messages
   if (message.author?.id === client.user?.id) return;
-  // Only process messages from Metlex Pool Bot
-  if (message.author?.username !== "Metlex Pool Bot") return;
+  // Debug: log every author that passes guild+channel filter (set DISCORD_DEBUG_AUTHORS=1)
+  if (DEBUG_AUTHORS) {
+    console.log(`[debug] author="${message.author?.username}" bot=${message.author?.bot} channel=#${message.channel?.name} snippet="${(message.content || "").slice(0, 60)}"`);
+  }
+  // Only process messages from target bot (case-insensitive substring match)
+  const authorName = (message.author?.username || "").toLowerCase();
+  if (!authorName.includes(TARGET_BOT_NAME.toLowerCase())) return;
 
   const content = message.content || "";
   const embeds = message.embeds?.map(e => `${e.title || ""} ${e.description || ""}`).join(" ") || "";
