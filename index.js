@@ -764,17 +764,17 @@ Summarize the current portfolio health, total fees earned, and performance of al
     await maybeRunMissedBriefing();
   }, { timezone: 'UTC' });
 
-  // Daily — refresh smart-wallets from Dune DLMM PnL leaderboard. Skipped if no key.
+  // Daily — discover top LPers from on-chain Meteora position accounts.
+  // Aggregates wallets active across multiple hot pools → smart-wallets.json.
   const smartWalletRefreshTask = cron.schedule(`30 0 * * *`, async () => {
-    if (!process.env.DUNE_API_KEY) return;
-    log("cron", "Refreshing smart-wallets from Dune leaderboard");
+    log("cron", "Discovering top LPers from on-chain position accounts");
     try {
       const { spawn } = await import("child_process");
-      const child = spawn("node", [path.resolve(path.dirname(fileURLToPath(import.meta.url)), "scripts/refresh-smart-wallets.js")], { stdio: "pipe" });
+      const child = spawn("node", [path.resolve(path.dirname(fileURLToPath(import.meta.url)), "scripts/discover-lpers.js")], { stdio: "pipe" });
       child.stdout.on("data", (d) => log("smart_wallets", d.toString().trim()));
       child.stderr.on("data", (d) => log("smart_wallets", `err: ${d.toString().trim()}`));
     } catch (error) {
-      log("cron_error", `Smart-wallets refresh failed: ${error.message}`);
+      log("cron_error", `LPer discovery failed: ${error.message}`);
     }
   }, { timezone: 'UTC' });
 

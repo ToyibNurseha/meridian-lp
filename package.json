@@ -20,6 +20,7 @@
     "test:screen": "node test/test-screening.js",
     "test:agent": "DRY_RUN=true node test/test-agent.js",
     "refresh:smart-wallets": "node scripts/refresh-smart-wallets.js",
+    "discover:lpers": "node scripts/discover-lpers.js",
     "helius:setup": "node scripts/setup-helius-webhook.js",
     "postinstall": "node scripts/patch-anchor.js"
   },
