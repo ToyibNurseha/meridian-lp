@@ -649,6 +649,10 @@ export async function executeTool(name, args) {
           initialUsd: result.initial_usd ?? 0,
           finalUsd: result.final_usd ?? 0,
           txCount: result.tx_count ?? (result.txs?.length ?? 0),
+          reason: args.reason ?? result.close_reason ?? null,
+          minutesHeld: result.minutes_held ?? null,
+          strategy: result.strategy ?? null,
+          amountSol: result.amount_sol ?? null,
         }).catch(() => {});
         // Note low-yield closes in pool memory so screener avoids redeploying
         if (args.reason && args.reason.toLowerCase().includes("yield")) {
