@@ -333,6 +333,7 @@ ${actionBlocks}
 
 RULES:
 - CLOSE: call close_position only — it handles fee claiming internally, do NOT call claim_fees first
+- CLOSE: ALWAYS pass the `, reason` parameter using the exact rule/exit reason from above (e.g. "Rule 3: pumped far above range", "Trailing TP: peak ...", "stop loss"). This is required for Telegram notification + pool memory.
 - CLAIM: call claim_fees with position address
 - INSTRUCTION: evaluate the instruction condition. If met → close_position. If not → HOLD, do nothing.
 - ⚡ exit alerts: close immediately, no exceptions
@@ -963,7 +964,13 @@ function getDeterministicCloseRule(position, managementConfig) {
     position.upper_bin != null &&
     position.active_bin > position.upper_bin + managementConfig.outOfRangeBinsToClose
   ) {
-    return { action: "CLOSE", rule: 3, reason: "pumped far above range" };
+    // Gate by minClosePnlUsd — avoid Rule 3 closes that net negative after gas (yunc-SOL pattern)
+    const minCloseAbs = Number(managementConfig.minClosePnlUsd ?? 0);
+    if (minCloseAbs > 0 && position.pnl_usd != null && Math.abs(position.pnl_usd) < minCloseAbs) {
+      log("cron", `Rule 3 deferred for ${position.pair}: |pnl_usd $${position.pnl_usd.toFixed(3)}| < $${minCloseAbs.toFixed(2)} — letting OOR timer handle it`);
+    } else {
+      return { action: "CLOSE", rule: 3, reason: "pumped far above range" };
+    }
   }
   if (
     position.active_bin != null &&

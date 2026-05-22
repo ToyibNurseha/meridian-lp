@@ -471,7 +471,7 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
 const GAS_SOL_PER_TX = 0.0005;
 const SOL_USD_FALLBACK = 85;
 
-export async function notifyClose({ pair, pnlUsd, pnlPct, feesUsd = 0, initialUsd = 0, finalUsd = 0, txCount = 0 }) {
+export async function notifyClose({ pair, pnlUsd, pnlPct, feesUsd = 0, initialUsd = 0, finalUsd = 0, txCount = 0, reason = null, minutesHeld = null, strategy = null, amountSol = null }) {
   if (hasActiveLiveMessage()) return;
   const sign = pnlUsd >= 0 ? "+" : "";
   const ilUsd = (finalUsd ?? 0) - (initialUsd ?? 0); // negative = IL on principal
@@ -489,6 +489,21 @@ export async function notifyClose({ pair, pnlUsd, pnlPct, feesUsd = 0, initialUs
   }
   lines.push(`Gas est: ~$${gasUsd.toFixed(2)} (◎${gasSol.toFixed(4)}, ${txCount || 3} tx)`);
   lines.push(`<b>Net: ${netSign}$${netUsd.toFixed(2)}</b>`);
+  if (amountSol != null) {
+    lines.push(`💎 Deployed: ◎${Number(amountSol).toFixed(2)}`);
+  }
+  if (minutesHeld != null) {
+    const m = Math.max(0, Math.round(Number(minutesHeld)));
+    const hold = m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+    lines.push(`⏱️ Hold: ${hold}`);
+  }
+  if (strategy) {
+    lines.push(`📐 Strategy: ${strategy}`);
+  }
+  if (reason) {
+    const trimmed = String(reason).replace(/[\r\n]+/g, " ").slice(0, 200);
+    lines.push(`📝 Reason: ${trimmed}`);
+  }
 
   await sendHTML(lines.join("\n"));
 }

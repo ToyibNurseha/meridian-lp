@@ -2011,6 +2011,9 @@ export async function closePosition({ position_address, reason }) {
         final_usd: finalValueUsd,
         tx_count: txHashes.length,
         base_mint: closeBaseMint,
+        minutes_held: minutesHeld,
+        strategy: tracked.strategy || null,
+        amount_sol: tracked.amount_sol ?? null,
       };
     }
 
