@@ -148,6 +148,13 @@ async function validateDeployPoolThresholds(args) {
       reason: `Pool ${volatilityTimeframe} volatility ${volatility ?? "unknown"} is unusable. Refusing deploy.`,
     };
   }
+  const maxVolatility = numberOrNull(config.screening.maxVolatility);
+  if (maxVolatility != null && volatility > maxVolatility) {
+    return {
+      pass: false,
+      reason: `Pool volatility ${volatility} exceeds maxVolatility ${maxVolatility}. Token is in extreme pump phase — refusing deploy.`,
+    };
+  }
 
   const actualBinStep = poolDetailBinStep(detail);
   const minStep = numberOrNull(config.screening.minBinStep);
@@ -360,6 +367,7 @@ const toolMap = {
       minTokenAgeHours: ["screening", "minTokenAgeHours"],
       maxTokenAgeHours: ["screening", "maxTokenAgeHours"],
       athFilterPct:     ["screening", "athFilterPct"],
+      maxVolatility:    ["screening", "maxVolatility"],
       minFeePerTvl24h: ["management", "minFeePerTvl24h"],
       // management
       minClaimAmount: ["management", "minClaimAmount"],
@@ -720,6 +728,13 @@ async function runSafetyChecks(name, args) {
         return {
           pass: false,
           reason: `volatility ${args.volatility} is invalid. Refusing deploy because the volatility feed is unusable.`,
+        };
+      }
+      const maxVolCap = numberOrNull(config.screening.maxVolatility);
+      if (maxVolCap != null && requestedVolatility != null && requestedVolatility > maxVolCap) {
+        return {
+          pass: false,
+          reason: `volatility ${requestedVolatility} exceeds maxVolatility ${maxVolCap}. Token is in extreme pump phase — refusing deploy.`,
         };
       }
       if (
