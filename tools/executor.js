@@ -122,10 +122,25 @@ async function validateDeployPoolThresholds(args) {
     (feeActiveTvlRatio == null || feeActiveTvlRatio === 0) &&
     (volumeWindow == null || volumeWindow === 0)
   ) {
-    return {
-      pass: false,
-      reason: `Pool has zero fees AND zero volume in current window — pool dead. Skipping deploy.`,
-    };
+    // Short window (e.g. 5m) routinely shows zero — re-check 1h before rejecting
+    let longDetail = null;
+    try {
+      longDetail = await fetchFreshPoolDetail(args.pool_address, "1h");
+    } catch (error) {
+      log("safety", `Long-window recheck failed for ${args.pool_address}: ${error.message}`);
+    }
+    const longFee = poolDetailFeeActiveTvlRatio(longDetail);
+    const longVolume = numberOrNull(longDetail?.volume);
+    const longDead =
+      (longFee == null || longFee === 0) &&
+      (longVolume == null || longVolume === 0);
+    if (longDead) {
+      return {
+        pass: false,
+        reason: `Pool has zero fees AND zero volume across both 5m and 1h windows — pool truly dead. Skipping deploy.`,
+      };
+    }
+    log("safety", `Pool ${args.pool_address} passed long-window recheck (1h fee/aTVL=${longFee}, vol=${longVolume}) — allowing deploy despite zero short-window`);
   }
 
   const volatilityTimeframe = getVolatilityTimeframe(config.screening.timeframe || "5m");

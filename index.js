@@ -465,7 +465,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
 
     // Hard filters after token recon — block launchpads and excessive Jupiter bot holders
     const filteredOut = [];
-    const passing = allCandidates.filter(({ pool, ti }) => {
+    const passing = allCandidates.filter(({ pool, ti, sw }) => {
       const launchpad = ti?.launchpad ?? null;
       if (launchpad && config.screening.allowedLaunchpads?.length > 0 && !config.screening.allowedLaunchpads.includes(launchpad)) {
         log("screening", `Skipping ${pool.name} — launchpad ${launchpad} not in allow-list`);
@@ -482,6 +482,21 @@ export async function runScreeningCycle({ silent = false } = {}) {
       if (botPct != null && maxBotHoldersPct != null && botPct > maxBotHoldersPct) {
         log("screening", `Bot-holder filter: dropped ${pool.name} — bots ${botPct}% > ${maxBotHoldersPct}%`);
         filteredOut.push({ name: pool.name, reason: `bot holders ${botPct}% > ${maxBotHoldersPct}%` });
+        return false;
+      }
+      // 1h pump retrace filter — deploying into a fresh +N% spike with 0% upside = first move kicks us OOR
+      const priceChange1h = ti?.stats_1h?.price_change;
+      const feeTvl = Number(pool.fee_active_tvl_ratio);
+      const smartWalletCount = sw?.in_pool?.length ?? 0;
+      const spikeThreshold = 20;
+      if (
+        Number.isFinite(priceChange1h) &&
+        priceChange1h > spikeThreshold &&
+        smartWalletCount === 0 &&
+        (!Number.isFinite(feeTvl) || feeTvl < 1.5)
+      ) {
+        log("screening", `1h-pump filter: dropped ${pool.name} — 1h +${priceChange1h}% with no smart wallets and fee/TVL ${feeTvl ?? "?"} < 1.5%`);
+        filteredOut.push({ name: pool.name, reason: `1h pump +${priceChange1h}% retrace risk (no smart wallets, fee/TVL ${feeTvl ?? "?"}<1.5%)` });
         return false;
       }
       return true;

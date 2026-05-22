@@ -472,12 +472,23 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     }
   }
 
-  // ── Stop loss ──────────────────────────────────────────────────
-  if (!pnl_pct_suspicious && currentPnlPct != null && mgmtConfig.stopLossPct != null && currentPnlPct <= mgmtConfig.stopLossPct) {
-    return {
-      action: "STOP_LOSS",
-      reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.stopLossPct}%`,
-    };
+  // ── Stop loss (volatility-scaled) ─────────────────────────────
+  // High-vol tokens dump fast — tighten SL to limit slow-bleed losses (HONTER pattern)
+  if (!pnl_pct_suspicious && currentPnlPct != null && mgmtConfig.stopLossPct != null) {
+    const baseSL = mgmtConfig.stopLossPct; // e.g. -15
+    const posVol = Number(pos.volatility);
+    let scaledSL = baseSL;
+    if (Number.isFinite(posVol) && posVol > 0) {
+      if (posVol >= 6) scaledSL = Math.max(baseSL, -10); // tight: -10% even if baseSL=-15
+      else if (posVol >= 4) scaledSL = Math.max(baseSL, -12.5);
+      // else: baseSL unchanged for low-vol tokens
+    }
+    if (currentPnlPct <= scaledSL) {
+      return {
+        action: "STOP_LOSS",
+        reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${scaledSL}%${scaledSL !== baseSL ? ` (vol-scaled from ${baseSL}%, vol=${posVol})` : ""}`,
+      };
+    }
   }
 
   // ── Trailing TP ────────────────────────────────────────────────
@@ -506,8 +517,22 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     }
   }
 
+  // ── Time-decay no-fee exit — confirmed zero fees after 30m = dead deploy
+  // Requires non-null values to avoid premature close on transient RPC nulls
+  const { age_minutes, unclaimed_fees_usd } = positionData;
+  if (
+    age_minutes != null &&
+    age_minutes >= 30 &&
+    unclaimed_fees_usd != null && unclaimed_fees_usd <= 0 &&
+    fee_per_tvl_24h != null && fee_per_tvl_24h <= 0
+  ) {
+    return {
+      action: "NO_FEES",
+      reason: `Dead deploy: zero fees after ${age_minutes}m (confirmed) — no point waiting for low_yield window`,
+    };
+  }
+
   // ── Low yield (only after position has had time to accumulate fees) ───
-  const { age_minutes } = positionData;
   const minAgeForYieldCheck = mgmtConfig.minAgeBeforeYieldCheck ?? 60;
   if (
     fee_per_tvl_24h != null &&
