@@ -148,6 +148,7 @@ POOL MEMORY:
 - sample_count >= 3 AND win_rate >= 50% → bullish boost.
 - Past OOR alone is NOT a skip reason — single-side bid_ask deploys naturally go OOR when price spikes; that's part of the strategy.
 - Active momentum (1h price > +10%, net_buyers > 100) can override mediocre historical record.
+- 1h price spike > +20% is a CAUTION signal, not a boost — price just pumped, retrace likely. Single-side SOL range with 0% upside deployed after a +20% spike means first move is through your range. Require smart_wallets present OR fee/TVL > 1.5% to deploy into a >20% 1h spike. Otherwise skip.
 
 DEPLOY RULES:
 - COMPOUNDING: Use the deploy amount from the goal EXACTLY. Do NOT default to a smaller number.
