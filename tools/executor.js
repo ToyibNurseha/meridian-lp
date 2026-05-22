@@ -148,8 +148,8 @@ async function validateDeployPoolThresholds(args) {
       reason: `Pool ${volatilityTimeframe} volatility ${volatility ?? "unknown"} is unusable. Refusing deploy.`,
     };
   }
-  const maxVolatility = numberOrNull(config.screening.maxVolatility);
-  if (maxVolatility != null && volatility > maxVolatility) {
+  const maxVolatility = Number(config.screening.maxVolatility);
+  if (Number.isFinite(maxVolatility) && maxVolatility > 0 && volatility > maxVolatility) {
     return {
       pass: false,
       reason: `Pool volatility ${volatility} exceeds maxVolatility ${maxVolatility}. Token is in extreme pump phase — refusing deploy.`,
@@ -730,8 +730,8 @@ async function runSafetyChecks(name, args) {
           reason: `volatility ${args.volatility} is invalid. Refusing deploy because the volatility feed is unusable.`,
         };
       }
-      const maxVolCap = numberOrNull(config.screening.maxVolatility);
-      if (maxVolCap != null && requestedVolatility != null && requestedVolatility > maxVolCap) {
+      const maxVolCap = Number(config.screening.maxVolatility);
+      if (Number.isFinite(maxVolCap) && maxVolCap > 0 && requestedVolatility != null && requestedVolatility > maxVolCap) {
         return {
           pass: false,
           reason: `volatility ${requestedVolatility} exceeds maxVolatility ${maxVolCap}. Token is in extreme pump phase — refusing deploy.`,
