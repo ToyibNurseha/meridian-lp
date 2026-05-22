@@ -333,7 +333,7 @@ ${actionBlocks}
 
 RULES:
 - CLOSE: call close_position only — it handles fee claiming internally, do NOT call claim_fees first
-- CLOSE: ALWAYS pass the `, reason` parameter using the exact rule/exit reason from above (e.g. "Rule 3: pumped far above range", "Trailing TP: peak ...", "stop loss"). This is required for Telegram notification + pool memory.
+- CLOSE: ALWAYS pass the "reason" parameter using the exact rule/exit reason from above (e.g. "Rule 3: pumped far above range", "Trailing TP: peak ...", "stop loss"). This is required for Telegram notification + pool memory.
 - CLAIM: call claim_fees with position address
 - INSTRUCTION: evaluate the instruction condition. If met → close_position. If not → HOLD, do nothing.
 - ⚡ exit alerts: close immediately, no exceptions
