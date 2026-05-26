@@ -475,12 +475,13 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   // ── Stop loss (volatility-scaled) ─────────────────────────────
   // High-vol tokens dump fast — tighten SL to limit slow-bleed losses (HONTER pattern)
   if (!pnl_pct_suspicious && currentPnlPct != null && mgmtConfig.stopLossPct != null) {
-    const baseSL = mgmtConfig.stopLossPct; // e.g. -15
+    const baseSL = mgmtConfig.stopLossPct; // e.g. -10
     const posVol = Number(pos.volatility);
     let scaledSL = baseSL;
     if (Number.isFinite(posVol) && posVol > 0) {
-      if (posVol >= 6) scaledSL = Math.max(baseSL, -10); // tight: -10% even if baseSL=-15
-      else if (posVol >= 4) scaledSL = Math.max(baseSL, -12.5);
+      if (posVol >= 6) scaledSL = Math.max(baseSL, -6);
+      else if (posVol >= 4) scaledSL = Math.max(baseSL, -8);
+      else if (posVol >= 2.5) scaledSL = Math.max(baseSL, -10);
       // else: baseSL unchanged for low-vol tokens
     }
     if (currentPnlPct <= scaledSL) {
@@ -509,11 +510,35 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   // ── Out of range too long ──────────────────────────────────────
   if (pos.out_of_range_since) {
     const minutesOOR = Math.floor((Date.now() - new Date(pos.out_of_range_since).getTime()) / 60000);
-    if (minutesOOR >= mgmtConfig.outOfRangeWaitMinutes) {
-      return {
-        action: "OUT_OF_RANGE",
-        reason: `Out of range for ${minutesOOR}m (limit: ${mgmtConfig.outOfRangeWaitMinutes}m)`,
-      };
+    // Scale OOR wait by volatility — low-vol pools need more time for price to drift back
+    // (today: 4 OOR-20m exits at near-flat PnL; longer wait would let fees compound).
+    const posVol = Number(pos.volatility);
+    const lowVolThresh = Number(mgmtConfig.oorWaitLowVolThreshold ?? 2);
+    const midVolThresh = Number(mgmtConfig.oorWaitMidVolThreshold ?? 3);
+    const lowVolWait = Number(mgmtConfig.oorWaitLowVolMin ?? 40);
+    const midVolWait = Number(mgmtConfig.oorWaitMidVolMin ?? 30);
+    let oorLimit = mgmtConfig.outOfRangeWaitMinutes;
+    if (Number.isFinite(posVol) && posVol > 0) {
+      if (posVol < lowVolThresh) oorLimit = Math.max(oorLimit, lowVolWait);
+      else if (posVol < midVolThresh) oorLimit = Math.max(oorLimit, midVolWait);
+    }
+    if (minutesOOR >= oorLimit) {
+      // Profit-guard: if position is in profit, skip OOR close — let trailing TP / Rule 3 catch the peak.
+      // Prevents killing small winners that drifted out of range (today: MAGA+1.41%, SPCX+0.54% murdered by OOR-20m).
+      const oorProfitGuard = Number(mgmtConfig.oorProfitGuardPct ?? 1);
+      if (
+        oorProfitGuard > 0 &&
+        !pnl_pct_suspicious &&
+        currentPnlPct != null &&
+        currentPnlPct >= oorProfitGuard
+      ) {
+        log("state", `Position ${position_address} OOR ${minutesOOR}m but PnL ${currentPnlPct.toFixed(2)}% >= guard ${oorProfitGuard}% — letting trailer handle exit`);
+      } else {
+        return {
+          action: "OUT_OF_RANGE",
+          reason: `Out of range for ${minutesOOR}m (limit: ${oorLimit}m${oorLimit !== mgmtConfig.outOfRangeWaitMinutes ? `, vol-scaled from ${mgmtConfig.outOfRangeWaitMinutes}m, vol=${posVol}` : ""})`,
+        };
+      }
     }
   }
 

@@ -63,7 +63,22 @@ function setPoolCooldown(entry, hours, reason) {
   const cooldownUntil = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
   entry.cooldown_until = cooldownUntil;
   entry.cooldown_reason = reason;
+  const reasonText = String(reason || "").toLowerCase();
+  if (reasonText.includes("volatility") || reasonText.includes("extreme pump")) {
+    if (!Array.isArray(entry.vol_block_history)) entry.vol_block_history = [];
+    entry.vol_block_history.push({ ts: new Date().toISOString(), reason: String(reason).slice(0, 200) });
+    entry.vol_block_history = entry.vol_block_history.slice(-20);
+  }
   return cooldownUntil;
+}
+
+export function countRecentVolBlocks(poolAddress, hoursWindow = 4) {
+  if (!poolAddress) return 0;
+  const db = load();
+  const entry = db[poolAddress];
+  if (!entry || !Array.isArray(entry.vol_block_history)) return 0;
+  const cutoff = Date.now() - hoursWindow * 60 * 60 * 1000;
+  return entry.vol_block_history.filter((e) => new Date(e.ts).getTime() >= cutoff).length;
 }
 
 function setBaseMintCooldown(db, baseMint, hours, reason) {

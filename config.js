@@ -110,6 +110,20 @@ export const config = {
     repeatDeployCooldownMinFeeEarnedPct: u.repeatDeployCooldownMinFeeEarnedPct ?? u.repeatDeployCooldownMinFeeYieldPct ?? 0,
     bigLossBlacklistPct:    u.bigLossBlacklistPct    ?? -10,  // pnl_pct threshold to trigger extended mint cooldown
     bigLossBlacklistHours:  u.bigLossBlacklistHours  ?? 24,   // duration of extended mint cooldown after big loss
+    // Volatility-whipsaw guard: reject deploy when pool had N cooldowns within window
+    recentVolBlockWindowHours: u.recentVolBlockWindowHours ?? 4,
+    recentVolBlockMaxCount:    u.recentVolBlockMaxCount    ?? 2,
+    // Smart-wallet gate
+    requireSmartWalletSignal:  u.requireSmartWalletSignal  ?? false,
+    smartWalletReducedDeploySol: u.smartWalletReducedDeploySol ?? 0.5,
+    smartWalletSignalVolThreshold: u.smartWalletSignalVolThreshold ?? 2.0,
+    // Dynamic OOR wait scaling by volatility
+    oorWaitLowVolMin:    u.oorWaitLowVolMin    ?? 40,
+    oorWaitMidVolMin:    u.oorWaitMidVolMin    ?? 30,
+    oorWaitLowVolThreshold: u.oorWaitLowVolThreshold ?? 2,
+    oorWaitMidVolThreshold: u.oorWaitMidVolThreshold ?? 3,
+    // OOR profit-guard: skip OOR close when PnL above this (let trailer handle peak)
+    oorProfitGuardPct: u.oorProfitGuardPct ?? 1,
     minVolumeToRebalance:  u.minVolumeToRebalance  ?? 1000,
     stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -15,
     takeProfitPct:         u.takeProfitPct         ?? u.takeProfitFeePct ?? 5,
@@ -141,6 +155,7 @@ export const config = {
     minBinsBelow: strategyMinBinsBelow,
     maxBinsBelow: strategyMaxBinsBelow,
     defaultBinsBelow: strategyDefaultBinsBelow,
+    highVolBinsBelowThreshold: u.highVolBinsBelowThreshold ?? 2.5,
   },
 
   // ─── Scheduling ─────────────────────────
