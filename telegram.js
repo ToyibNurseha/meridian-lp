@@ -444,7 +444,6 @@ export function stopPolling() {
 
 // ─── Notification helpers ────────────────────────────────────────
 export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, rangeCoverage, binStep, baseFee }) {
-  if (hasActiveLiveMessage()) return;
   const priceStr = priceRange
     ? `Price range: ${priceRange.min < 0.0001 ? priceRange.min.toExponential(3) : priceRange.min.toFixed(6)} – ${priceRange.max < 0.0001 ? priceRange.max.toExponential(3) : priceRange.max.toFixed(6)}\n`
     : "";
@@ -472,7 +471,6 @@ const GAS_SOL_PER_TX = 0.0005;
 const SOL_USD_FALLBACK = 85;
 
 export async function notifyClose({ pair, pnlUsd, pnlPct, feesUsd = 0, initialUsd = 0, finalUsd = 0, txCount = 0, reason = null, minutesHeld = null, strategy = null, amountSol = null }) {
-  if (hasActiveLiveMessage()) return;
   const sign = pnlUsd >= 0 ? "+" : "";
   const ilUsd = (finalUsd ?? 0) - (initialUsd ?? 0); // negative = IL on principal
   const gasSol = (txCount || 3) * GAS_SOL_PER_TX;
