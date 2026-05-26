@@ -517,18 +517,26 @@ export async function notifyClose({ pair, pnlUsd, pnlPct, feesUsd = 0, initialUs
   const netUsd = (pnlUsd ?? 0) - gasUsd;
   const netSign = netUsd >= 0 ? "+" : "";
 
+  const solPrice = (amountSol && initialUsd) ? initialUsd / amountSol : SOL_USD_FALLBACK;
+  const finalSol = (finalUsd != null && solPrice) ? finalUsd / solPrice : null;
+
   const lines = [
     `🔒 <b>Closed</b> ${pair}`,
     `PnL: ${sign}$${(pnlUsd ?? 0).toFixed(2)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)`,
   ];
+  if (amountSol != null && initialUsd) {
+    lines.push(`💰 Deposited: ◎${Number(amountSol).toFixed(4)} ($${(initialUsd ?? 0).toFixed(2)})`);
+  } else if (amountSol != null) {
+    lines.push(`💰 Deposited: ◎${Number(amountSol).toFixed(4)}`);
+  }
+  if (finalSol != null && finalUsd) {
+    lines.push(`💸 Withdrawn: ◎${finalSol.toFixed(4)} ($${(finalUsd ?? 0).toFixed(2)})`);
+  }
   if (feesUsd || initialUsd) {
     lines.push(`Fees: $${(feesUsd ?? 0).toFixed(2)} | IL: ${ilUsd >= 0 ? "+" : ""}$${ilUsd.toFixed(2)}`);
   }
   lines.push(`Gas est: ~$${gasUsd.toFixed(2)} (◎${gasSol.toFixed(4)}, ${txCount || 3} tx)`);
   lines.push(`<b>Net: ${netSign}$${netUsd.toFixed(2)}</b>`);
-  if (amountSol != null) {
-    lines.push(`💎 Deployed: ◎${Number(amountSol).toFixed(2)}`);
-  }
   if (minutesHeld != null) {
     const m = Math.max(0, Math.round(Number(minutesHeld)));
     const hold = m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;

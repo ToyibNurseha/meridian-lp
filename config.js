@@ -116,6 +116,8 @@ export const config = {
     minFeePerTvl24h:       u.minFeePerTvl24h       ?? 7,
     minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 60, // minutes before low yield can trigger close
     minClosePnlUsd:        u.minClosePnlUsd        ?? 0.20,  // gate LOW_YIELD close when |pnl_usd| below this
+    timeStopHours:         u.timeStopHours         ?? 5,    // Rule 6: close after this many hours if underwater
+    timeStopUnderwaterPct: u.timeStopUnderwaterPct ?? -5,   // Rule 6: pnl_pct threshold for stale + underwater close
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,
