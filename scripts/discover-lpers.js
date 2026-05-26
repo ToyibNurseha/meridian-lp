@@ -90,7 +90,6 @@ async function main() {
     process.exit(1);
   }
 
-  const { discoverPools } = await import("../tools/screening.js");
   const dlmm = await import("@meteora-ag/dlmm");
   const {
     createProgram,
@@ -101,8 +100,26 @@ async function main() {
     wrapPosition,
   } = dlmm;
 
-  console.log(`Fetching top ${opts.topPools} hot Meteora pools...`);
-  const { pools } = await discoverPools({ page_size: 100 });
+  // Fetch RAW Meteora pool list directly — bypass screening filters so wallet
+  // discovery is not constrained by deploy thresholds (mcap/vol/organic etc).
+  console.log(`Fetching top ${opts.topPools} hot Meteora pools (raw, no screening filters)...`);
+  const POOL_DISCOVERY_BASE = "https://pool-discovery-api.datapi.meteora.ag";
+  const rawUrl = `${POOL_DISCOVERY_BASE}/pools?page_size=${Math.max(opts.topPools, 50)}&timeframe=5m&category=trending`;
+  let pools = [];
+  try {
+    const res = await fetch(rawUrl);
+    if (!res.ok) throw new Error(`Meteora API ${res.status}`);
+    const data = await res.json();
+    pools = (data?.data || []).map((p) => ({
+      pool: p.pool_address,
+      name: p.name,
+      tvl: p.tvl,
+      volume_window: p.volume_window,
+    }));
+  } catch (err) {
+    console.error(`Raw pool fetch failed: ${err.message}`);
+    process.exit(1);
+  }
   const topPools = pools.slice(0, opts.topPools);
   if (topPools.length === 0) {
     console.error("No pools returned from discovery. Aborting.");
