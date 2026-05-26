@@ -978,10 +978,30 @@ function getDeterministicCloseRule(position, managementConfig) {
   if (
     position.active_bin != null &&
     position.upper_bin != null &&
-    position.active_bin > position.upper_bin &&
-    (position.minutes_out_of_range ?? 0) >= managementConfig.outOfRangeWaitMinutes
+    position.active_bin > position.upper_bin
   ) {
-    return { action: "CLOSE", rule: 4, reason: "OOR" };
+    const posVol = Number(position.volatility);
+    const lowVolThresh = Number(managementConfig.oorWaitLowVolThreshold ?? 2);
+    const midVolThresh = Number(managementConfig.oorWaitMidVolThreshold ?? 3);
+    const lowVolWait = Number(managementConfig.oorWaitLowVolMin ?? 40);
+    const midVolWait = Number(managementConfig.oorWaitMidVolMin ?? 30);
+    let oorLimit = managementConfig.outOfRangeWaitMinutes;
+    if (Number.isFinite(posVol) && posVol > 0) {
+      if (posVol < lowVolThresh) oorLimit = Math.max(oorLimit, lowVolWait);
+      else if (posVol < midVolThresh) oorLimit = Math.max(oorLimit, midVolWait);
+    }
+    if ((position.minutes_out_of_range ?? 0) >= oorLimit) {
+      const oorProfitGuard = Number(managementConfig.oorProfitGuardPct ?? 1);
+      if (
+        oorProfitGuard > 0 &&
+        position.pnl_pct != null &&
+        position.pnl_pct >= oorProfitGuard
+      ) {
+        log("cron", `Rule 4 OOR deferred for ${position.pair}: PnL ${position.pnl_pct.toFixed(2)}% >= guard ${oorProfitGuard}% — let trailer/Rule 3 handle peak`);
+      } else {
+        return { action: "CLOSE", rule: 4, reason: "OOR" };
+      }
+    }
   }
   if (
     position.fee_per_tvl_24h != null &&

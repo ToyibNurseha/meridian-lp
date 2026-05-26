@@ -14,7 +14,7 @@ import { studyTopLPers } from "./study.js";
 import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../lessons.js";
 import { setPositionInstruction } from "../state.js";
 
-import { getPoolMemory, addPoolNote, markPoolSafetyBlocked } from "../pool-memory.js";
+import { getPoolMemory, addPoolNote, markPoolSafetyBlocked, countRecentVolBlocks } from "../pool-memory.js";
 import { addStrategy, listStrategies, getStrategy, setActiveStrategy, removeStrategy } from "../strategy-library.js";
 import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../token-blacklist.js";
 import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist.js";
@@ -721,6 +721,21 @@ async function runSafetyChecks(name, args) {
       const poolThresholds = await validateDeployPoolThresholds(args);
       if (!poolThresholds.pass) return poolThresholds;
 
+      // Reject pools that whipsawed (multiple volatility cooldowns in recent window).
+      // Catches tokens like grail-SOL chopping between vol 3-5 over a few hours — even
+      // if current vol momentarily drops below cap, recent instability predicts SL hits.
+      const volBlockWindowH = Number(config.management.recentVolBlockWindowHours ?? 4);
+      const volBlockMaxCount = Number(config.management.recentVolBlockMaxCount ?? 2);
+      if (volBlockWindowH > 0 && volBlockMaxCount > 0 && args.pool_address) {
+        const recentBlocks = countRecentVolBlocks(args.pool_address, volBlockWindowH);
+        if (recentBlocks >= volBlockMaxCount) {
+          return {
+            pass: false,
+            reason: `Pool had ${recentBlocks} volatility cooldown(s) in last ${volBlockWindowH}h. Token is whipsawing — refusing deploy.`,
+          };
+        }
+      }
+
       // Reject pools with bin_step out of configured range
       const minStep = config.screening.minBinStep;
       const maxStep = config.screening.maxBinStep;
@@ -786,6 +801,23 @@ async function runSafetyChecks(name, args) {
           reason: `bins_below ${args.bins_below ?? "missing"} is below minimum ${minBinsBelow}. Refusing 1-bin/tiny-range deploy.`,
         };
       }
+
+      // Force deeper bins on mid/high-vol pools to absorb dumps (grail/PP420 pattern).
+      const highVolBinsThreshold = Number(config.strategy.highVolBinsBelowThreshold ?? 2.5);
+      const maxBinsBelow = Number(config.strategy.maxBinsBelow ?? 65);
+      if (
+        isSingleSidedSol &&
+        args.downside_pct == null &&
+        requestedVolatility != null &&
+        requestedVolatility >= highVolBinsThreshold &&
+        Number.isFinite(requestedBinsBelow) &&
+        requestedBinsBelow < maxBinsBelow
+      ) {
+        return {
+          pass: false,
+          reason: `volatility ${requestedVolatility} >= ${highVolBinsThreshold} but bins_below ${requestedBinsBelow} < maxBinsBelow ${maxBinsBelow}. Use bins_below=${maxBinsBelow} for high-vol deploys.`,
+        };
+      }
       if (
         isSingleSidedSol &&
         args.upside_pct == null &&
@@ -817,6 +849,14 @@ async function runSafetyChecks(name, args) {
 
       // Block same base token across different pools
       if (args.base_mint) {
+        // Reject placeholder/bogus mints (e.g. "grail_base_mint") that bypass holder/audit checks
+        const SOLANA_MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+        if (!SOLANA_MINT_RE.test(args.base_mint)) {
+          return {
+            pass: false,
+            reason: `base_mint "${args.base_mint}" is not a valid Solana address. Refusing deploy — fetch real mint via get_pool_detail first.`,
+          };
+        }
         const alreadyHasMint = positions.positions.some(
           (p) => p.base_mint === args.base_mint
         );
@@ -824,6 +864,27 @@ async function runSafetyChecks(name, args) {
           return {
             pass: false,
             reason: `Already holding base token ${args.base_mint} in another pool. One position per token only.`,
+          };
+        }
+      }
+
+      // Smart wallet signal gate — only enforced on high-vol pools where dump risk is high.
+      // PP420/grail (vol 2-3) dumped without smart wallet confirmation; PARALOOM had 6/22.
+      const requireSmartSignal = config.management.requireSmartWalletSignal === true;
+      const smartSignalVolThresh = Number(config.management.smartWalletSignalVolThreshold ?? 2.5);
+      const reducedDeployCap = Number(config.management.smartWalletReducedDeploySol ?? 0.3);
+      if (
+        requireSmartSignal &&
+        args.pool_address &&
+        deployAmountY > reducedDeployCap &&
+        requestedVolatility != null &&
+        requestedVolatility >= smartSignalVolThresh
+      ) {
+        const swCheck = await checkSmartWalletsOnPool({ pool_address: args.pool_address });
+        if (swCheck && swCheck.tracked_wallets > 0 && swCheck.in_pool.length === 0) {
+          return {
+            pass: false,
+            reason: `High-vol pool (${requestedVolatility} >= ${smartSignalVolThresh}) with no smart wallet signal: 0/${swCheck.tracked_wallets} tracked LP wallets in pool. Reduce deploy to <=${reducedDeployCap} SOL or pick a pool with smart wallet confluence.`,
           };
         }
       }
