@@ -285,10 +285,13 @@ export async function runManagementCycle({ silent = false } = {}) {
     const reportLines = positionData.map((p) => {
       const act = actionMap.get(p.position);
       const inRange = p.in_range ? "🟢 IN" : `🔴 OOR ${p.minutes_out_of_range ?? 0}m`;
-      const val = config.management.solMode ? `◎${p.total_value_usd ?? "?"}` : `$${p.total_value_usd ?? "?"}`;
-      const unclaimed = config.management.solMode ? `◎${p.unclaimed_fees_usd ?? "?"}` : `$${p.unclaimed_fees_usd ?? "?"}`;
+      const curSym = config.management.solMode ? "◎" : "$";
+      const val = `${curSym}${p.total_value_usd ?? "?"}`;
+      const unclaimed = `${curSym}${p.unclaimed_fees_usd ?? "?"}`;
+      const pnlSign = (p.pnl_usd ?? 0) >= 0 ? "+" : "";
+      const pnlVal = p.pnl_usd != null ? ` (${pnlSign}${curSym}${Number(p.pnl_usd).toFixed(2)})` : "";
       const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
-      let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}% | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
+      let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}%${pnlVal} | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
       if (p.instruction) line += `\nNote: "${p.instruction}"`;
       if (act.action === "CLOSE" && act.rule === "exit") line += `\n⚡ Trailing TP: ${act.reason}`;
       if (act.action === "CLOSE" && act.rule && act.rule !== "exit") line += `\nRule ${act.rule}: ${act.reason}`;
@@ -986,6 +989,16 @@ function getDeterministicCloseRule(position, managementConfig) {
     (position.age_minutes ?? 0) >= 60
   ) {
     return { action: "CLOSE", rule: 5, reason: "low yield" };
+  }
+  if (
+    !pnlSuspect &&
+    managementConfig.timeStopHours != null &&
+    managementConfig.timeStopUnderwaterPct != null &&
+    position.pnl_pct != null &&
+    (position.age_minutes ?? 0) >= managementConfig.timeStopHours * 60 &&
+    position.pnl_pct <= managementConfig.timeStopUnderwaterPct
+  ) {
+    return { action: "CLOSE", rule: 6, reason: `stale + underwater (${managementConfig.timeStopHours}h, ${position.pnl_pct}% <= ${managementConfig.timeStopUnderwaterPct}%)` };
   }
   return null;
 }
