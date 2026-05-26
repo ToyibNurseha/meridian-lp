@@ -51,9 +51,11 @@ export function listSmartWallets() {
   return { total: wallets.length, wallets };
 }
 
-// Cache wallet positions for 5 minutes to avoid hammering RPC
+// Cache wallet positions for 15 minutes to avoid hammering RPC
 const _cache = new Map(); // address -> { positions, fetchedAt }
-const CACHE_TTL = 5 * 60 * 1000;
+const CACHE_TTL = 15 * 60 * 1000;
+const FETCH_CONCURRENCY = 6;
+const FETCH_BATCH_DELAY_MS = 250;
 
 export async function checkSmartWalletsOnPool({ pool_address }) {
   const { wallets: allWallets } = loadWallets();
@@ -71,21 +73,40 @@ export async function checkSmartWalletsOnPool({ pool_address }) {
 
   const { getWalletPositions } = await import("./tools/dlmm.js");
 
-  const results = await Promise.all(
-    wallets.map(async (wallet) => {
-      try {
-        const cached = _cache.get(wallet.address);
-        if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
-          return { wallet, positions: cached.positions };
+  // Split into cached (instant) vs cold (needs RPC) — only batch the cold ones
+  const cachedResults = [];
+  const coldWallets = [];
+  for (const wallet of wallets) {
+    const cached = _cache.get(wallet.address);
+    if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
+      cachedResults.push({ wallet, positions: cached.positions });
+    } else {
+      coldWallets.push(wallet);
+    }
+  }
+
+  // Batch cold fetches to avoid 429 from RPC. 77 wallets in parallel triggered rate-limit.
+  const coldResults = [];
+  for (let i = 0; i < coldWallets.length; i += FETCH_CONCURRENCY) {
+    const batch = coldWallets.slice(i, i + FETCH_CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map(async (wallet) => {
+        try {
+          const { positions } = await getWalletPositions({ wallet_address: wallet.address });
+          _cache.set(wallet.address, { positions: positions || [], fetchedAt: Date.now() });
+          return { wallet, positions: positions || [] };
+        } catch {
+          return { wallet, positions: [] };
         }
-        const { positions } = await getWalletPositions({ wallet_address: wallet.address });
-        _cache.set(wallet.address, { positions: positions || [], fetchedAt: Date.now() });
-        return { wallet, positions: positions || [] };
-      } catch {
-        return { wallet, positions: [] };
-      }
-    })
-  );
+      })
+    );
+    coldResults.push(...batchResults);
+    if (i + FETCH_CONCURRENCY < coldWallets.length) {
+      await new Promise((r) => setTimeout(r, FETCH_BATCH_DELAY_MS));
+    }
+  }
+
+  const results = [...cachedResults, ...coldResults];
 
   const inPool = results
     .filter((r) => r.positions.some((p) => p.pool === pool_address))
