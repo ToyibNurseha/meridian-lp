@@ -5,7 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
-import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
+import { getMyPositions, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
@@ -1598,13 +1598,9 @@ async function telegramHandler(msg) {
       if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number. Use /positions first."); return; }
       const pos = positions[idx];
       await sendMessage(`Closing ${pos.pair}...`);
-      const result = await closePosition({ position_address: pos.position });
-      if (result.success) {
-        const closeTxs = result.close_txs?.length ? result.close_txs : result.txs;
-        const claimNote = result.claim_txs?.length ? `\nClaim txs: ${result.claim_txs.join(", ")}` : "";
-        await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${config.management.solMode ? "◎" : "$"}${result.pnl_usd ?? "?"} | close txs: ${closeTxs?.join(", ") || "n/a"}${claimNote}`);
-      } else {
-        await sendMessage(`❌ Close failed: ${JSON.stringify(result)}`);
+      const result = await executeTool("close_position", { position_address: pos.position, reason: "Manual close via /close" });
+      if (!result?.success) {
+        await sendMessage(`❌ Close failed: ${result?.reason || result?.error || JSON.stringify(result)}`);
       }
     } catch (e) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
     return;
@@ -1618,8 +1614,8 @@ async function telegramHandler(msg) {
       const results = [];
       for (const pos of positions) {
         try {
-          const result = await closePosition({ position_address: pos.position });
-          results.push(`${pos.pair}: ${result.success ? "closed" : `failed (${result.error || "unknown"})`}`);
+          const result = await executeTool("close_position", { position_address: pos.position, reason: "Manual close via /closeall" });
+          results.push(`${pos.pair}: ${result?.success ? "closed" : `failed (${result?.reason || result?.error || "unknown"})`}`);
         } catch (error) {
           results.push(`${pos.pair}: failed (${error.message})`);
         }
