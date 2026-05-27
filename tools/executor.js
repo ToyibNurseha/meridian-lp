@@ -819,6 +819,7 @@ async function runSafetyChecks(name, args) {
       }
 
       // Force deeper bins on mid/high-vol pools to absorb dumps (grail/PP420 pattern).
+      // Auto-coerce rather than reject — LLM's first attempt succeeds with deeper range.
       const highVolBinsThreshold = Number(config.strategy.highVolBinsBelowThreshold ?? 2.5);
       const maxBinsBelow = Number(config.strategy.maxBinsBelow ?? 65);
       if (
@@ -829,10 +830,8 @@ async function runSafetyChecks(name, args) {
         Number.isFinite(requestedBinsBelow) &&
         requestedBinsBelow < maxBinsBelow
       ) {
-        return {
-          pass: false,
-          reason: `volatility ${requestedVolatility} >= ${highVolBinsThreshold} but bins_below ${requestedBinsBelow} < maxBinsBelow ${maxBinsBelow}. Use bins_below=${maxBinsBelow} for high-vol deploys.`,
-        };
+        log("safety_coerce", `deploy_position: volatility ${requestedVolatility} >= ${highVolBinsThreshold} — overriding bins_below ${requestedBinsBelow} → ${maxBinsBelow}`);
+        args.bins_below = maxBinsBelow;
       }
       if (
         isSingleSidedSol &&
