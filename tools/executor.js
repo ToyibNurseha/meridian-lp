@@ -15,6 +15,7 @@ import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, g
 import { setPositionInstruction } from "../state.js";
 
 import { getPoolMemory, addPoolNote, markPoolSafetyBlocked, countRecentVolBlocks } from "../pool-memory.js";
+import { recordSkip } from "../skip-tracker.js";
 import { addStrategy, listStrategies, getStrategy, setActiveStrategy, removeStrategy } from "../strategy-library.js";
 import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../token-blacklist.js";
 import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist.js";
@@ -615,6 +616,21 @@ export async function executeTool(name, args) {
             reason: safetyCheck.reason.slice(0, 120),
           });
         }
+        try {
+          recordSkip({
+            pool: args.pool_address,
+            name: args.pool_name,
+            reason: safetyCheck.reason,
+            source: "safety_block",
+            metrics: {
+              volatility: args.volatility,
+              fee_active_tvl_ratio: args.fee_tvl_ratio,
+              organic_score: args.organic_score,
+              bin_step: args.bin_step,
+              price_at_skip: args.active_price ?? args.current_price ?? null,
+            },
+          });
+        } catch {}
       }
       return {
         blocked: true,
