@@ -1104,7 +1104,7 @@ function formatConfigSnapshot() {
     `Smart-wallet gate: ${config.management.requireSmartWalletSignal ? "on" : "off"} | vol≥${config.management.smartWalletSignalVolThreshold} + amount>${config.management.smartWalletReducedDeploySol} SOL → require ≥1 wallet`,
     `High-vol bin force: vol≥${config.strategy.highVolBinsBelowThreshold} → bins_below=${config.strategy.maxBinsBelow}`,
     `Auto-evolve: ${config.evolution?.autoEvolveEnabled === false ? "off (frozen)" : "on"}`,
-    `Screening: ${config.screening.category} / ${config.screening.timeframe} | TVL ${config.screening.minTvl}-${config.screening.maxTvl} | maxVol ${config.screening.maxVolatility ?? "off"}`,
+    `Screening: ${config.screening.category} / ${config.screening.timeframe} | TVL ${config.screening.minTvl}-${config.screening.maxTvl} | maxVol ${config.screening.maxVolatility ?? "off"} | maxRecentPump ${config.screening.maxRecentPumpPct ?? "off"}%`,
     `Intervals: manage ${config.schedule.managementIntervalMin}m | screen ${config.schedule.screeningIntervalMin}m`,
     `HiveMind: ${isHiveMindEnabled() ? "enabled" : "disabled"}${config.hiveMind.agentId ? ` | ${config.hiveMind.agentId}` : ""}`,
   ].join("\n");

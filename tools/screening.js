@@ -126,6 +126,18 @@ function getRawPoolScreeningRejectReason(pool, s) {
   if (!isUsableVolatility(volatility)) {
     return `volatility ${volatility ?? "unknown"} is unusable`;
   }
+  // Momentum-wait gate: skip pools that just pumped hard (no point deploying buy-the-dip
+  // while price keeps ripping — will OOR upward immediately). Wait for consolidation.
+  const recentPriceChange = numeric(pool?.pool_price_change_pct);
+  if (
+    s.maxRecentPumpPct != null &&
+    Number.isFinite(s.maxRecentPumpPct) &&
+    s.maxRecentPumpPct > 0 &&
+    recentPriceChange != null &&
+    recentPriceChange > s.maxRecentPumpPct
+  ) {
+    return `recent pump +${recentPriceChange.toFixed(1)}% > maxRecentPumpPct ${s.maxRecentPumpPct}%. Wait for consolidation.`;
+  }
   if (baseOrganic == null || baseOrganic < s.minOrganic) {
     return `base organic ${baseOrganic ?? "unknown"} below minOrganic ${s.minOrganic}`;
   }

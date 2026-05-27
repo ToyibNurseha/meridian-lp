@@ -87,6 +87,7 @@ export const config = {
     maxBotHoldersPct:  u.maxBotHoldersPct  ?? 30,  // max bot holder addresses % (Jupiter audit)
     maxTop10Pct:       u.maxTop10Pct       ?? 60,  // max top 10 holders concentration
     maxVolatility:     u.maxVolatility     ?? null, // null = no cap; set e.g. 8 to reject extreme-pump tokens
+    maxRecentPumpPct:  u.maxRecentPumpPct  ?? 30,   // reject pools with pool_price_change_pct > this; wait for cooldown
     staticRejectCooldownHours: u.staticRejectCooldownHours ?? 24, // mint cooldown when rejected for permanent metric
     allowedLaunchpads: u.allowedLaunchpads ?? [],  // allow-list launchpads, [] = no allow-list
     blockedLaunchpads:  u.blockedLaunchpads  ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
@@ -132,6 +133,8 @@ export const config = {
     minClosePnlUsd:        u.minClosePnlUsd        ?? 0.20,  // gate LOW_YIELD close when |pnl_usd| below this
     timeStopHours:         u.timeStopHours         ?? 5,    // Rule 6: close after this many hours if underwater
     timeStopUnderwaterPct: u.timeStopUnderwaterPct ?? -5,   // Rule 6: pnl_pct threshold for stale + underwater close
+    deadDeployMinutes:     u.deadDeployMinutes     ?? 40,   // dead-deploy age threshold
+    deadDeployMinPnlPct:   u.deadDeployMinPnlPct   ?? 0,    // require PnL >= this to close dead deploy; otherwise wait for green
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,
@@ -140,6 +143,7 @@ export const config = {
     trailingTakeProfit:    u.trailingTakeProfit    ?? true,
     trailingTriggerPct:    u.trailingTriggerPct    ?? 3,    // activate trailing at X% PnL
     trailingDropPct:       u.trailingDropPct       ?? 1.5,  // close when drops X% from peak
+    trailingSevereDropMultiplier: u.trailingSevereDropMultiplier ?? 2, // bypass confirmation when drop >= trailingDrop × this
     pnlSanityMaxDiffPct:   u.pnlSanityMaxDiffPct   ?? 5,    // max allowed diff between reported and derived pnl % before ignoring a tick
     // Flash dump detector — force-close on rapid PnL drop within short window
     flashDumpEnabled:      u.flashDumpEnabled      ?? true,

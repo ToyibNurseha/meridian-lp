@@ -288,6 +288,13 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
           continue;
         }
         if (mustUseRealTool && !sawToolCall) {
+          // Accept "NO DEPLOY" decisions — screener can legitimately decide no candidate qualifies.
+          // Also accept explicit "decline"/"skip" decisions in MANAGER/general contexts.
+          const NO_ACTION_PATTERN = /\bNO\s*DEPLOY\b|\bNO[-_\s]*ACTION\b|\bSKIP\b|\bDECLINE\b/i;
+          if (NO_ACTION_PATTERN.test(msg.content)) {
+            log("agent", `No-tool final answer accepted (matched NO DEPLOY / NO ACTION pattern)`);
+            return { content: msg.content, userMessage: goal };
+          }
           noToolRetryCount += 1;
           messages.pop();
           log("agent", `Rejected no-tool final answer (${noToolRetryCount}/2) for tool-required request`);
@@ -300,8 +307,8 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
           messages.push({
             role: providerMode === "system" ? "system" : "user",
             content: providerMode === "system"
-              ? "You have not used any tool yet. This request requires real tool execution or live tool-backed data. Do not answer from memory or inference. Call the appropriate tool first, then report only the real result."
-              : "[SYSTEM REMINDER]\nYou have not used any tool yet. This request requires real tool execution or live tool-backed data. Do not answer from memory or inference. Call the appropriate tool first, then report only the real result.",
+              ? "You have not used any tool yet. This request requires real tool execution or live tool-backed data. Do not answer from memory or inference. Call the appropriate tool first, then report only the real result. (If no candidate qualifies, reply with exactly 'NO DEPLOY' and explain briefly.)"
+              : "[SYSTEM REMINDER]\nYou have not used any tool yet. This request requires real tool execution or live tool-backed data. Do not answer from memory or inference. Call the appropriate tool first, then report only the real result. (If no candidate qualifies, reply with exactly 'NO DEPLOY' and explain briefly.)",
           });
           continue;
         }

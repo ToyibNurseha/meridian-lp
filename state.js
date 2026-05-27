@@ -496,10 +496,14 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   if (!pnl_pct_suspicious && pos.trailing_active) {
     const dropFromPeak = pos.peak_pnl_pct - currentPnlPct;
     if (dropFromPeak >= mgmtConfig.trailingDropPct) {
+      // Severe drop (≥2x trailingDrop) bypasses confirmation — price is cratering, exit now.
+      // ZINC pattern: peak 3.48% → confirmation 15s delay → final -6.11% (-9.59% drop).
+      const severeDropMultiplier = Number(mgmtConfig.trailingSevereDropMultiplier ?? 2);
+      const isSevere = dropFromPeak >= mgmtConfig.trailingDropPct * severeDropMultiplier;
       return {
         action: "TRAILING_TP",
-        reason: `Trailing TP: peak ${pos.peak_pnl_pct.toFixed(2)}% → current ${currentPnlPct.toFixed(2)}% (dropped ${dropFromPeak.toFixed(2)}% >= ${mgmtConfig.trailingDropPct}%)`,
-        needs_confirmation: true,
+        reason: `Trailing TP: peak ${pos.peak_pnl_pct.toFixed(2)}% → current ${currentPnlPct.toFixed(2)}% (dropped ${dropFromPeak.toFixed(2)}% >= ${mgmtConfig.trailingDropPct}%${isSevere ? ", SEVERE — no recheck" : ""})`,
+        needs_confirmation: !isSevere,
         peak_pnl_pct: pos.peak_pnl_pct,
         current_pnl_pct: currentPnlPct,
         drop_from_peak_pct: dropFromPeak,
@@ -542,19 +546,30 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     }
   }
 
-  // ── Time-decay no-fee exit — confirmed zero fees after 30m = dead deploy
-  // Requires non-null values to avoid premature close on transient RPC nulls
+  // ── Time-decay no-fee exit — confirmed zero fees after deadDeployMinutes = dead deploy
+  // BUT only close when PnL >= deadDeployMinPnlPct (default 0). Otherwise wait for green
+  // to avoid locking in small losses. Time-stop Rule 6 acts as backstop for stale negatives.
   const { age_minutes, unclaimed_fees_usd } = positionData;
+  const deadDeployMin = Number(mgmtConfig.deadDeployMinutes ?? 40);
+  const deadDeployMinPnl = Number(mgmtConfig.deadDeployMinPnlPct ?? 0);
   if (
     age_minutes != null &&
-    age_minutes >= 30 &&
+    age_minutes >= deadDeployMin &&
     unclaimed_fees_usd != null && unclaimed_fees_usd <= 0 &&
     fee_per_tvl_24h != null && fee_per_tvl_24h <= 0
   ) {
-    return {
-      action: "NO_FEES",
-      reason: `Dead deploy: zero fees after ${age_minutes}m (confirmed) — no point waiting for low_yield window`,
-    };
+    if (
+      !pnl_pct_suspicious &&
+      currentPnlPct != null &&
+      currentPnlPct < deadDeployMinPnl
+    ) {
+      log("state", `Position ${position_address} dead-deploy hold: PnL ${currentPnlPct.toFixed(2)}% < ${deadDeployMinPnl}% — waiting for green (time-stop Rule 6 is backstop)`);
+    } else {
+      return {
+        action: "NO_FEES",
+        reason: `Dead deploy: zero fees after ${age_minutes}m, PnL ${currentPnlPct != null ? currentPnlPct.toFixed(2) + "%" : "n/a"} — closing while green`,
+      };
+    }
   }
 
   // ── Low yield (only after position has had time to accumulate fees) ───
