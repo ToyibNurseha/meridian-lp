@@ -144,6 +144,26 @@ async function validateDeployPoolThresholds(args) {
     log("safety", `Pool ${args.pool_address} passed long-window recheck (1h fee/aTVL=${longFee}, vol=${longVolume}) — allowing deploy despite zero short-window`);
   }
 
+  const minFeeRatio = Number(config.screening.minFeeActiveTvlRatio);
+  if (Number.isFinite(minFeeRatio) && minFeeRatio > 0) {
+    if (feeActiveTvlRatio == null || feeActiveTvlRatio < minFeeRatio) {
+      let recheckDetail = null;
+      try {
+        recheckDetail = await fetchFreshPoolDetail(args.pool_address, "30m");
+      } catch (error) {
+        log("safety", `30m fee/TVL recheck failed for ${args.pool_address}: ${error.message}`);
+      }
+      const recheckRatio = poolDetailFeeActiveTvlRatio(recheckDetail);
+      if (recheckRatio == null || recheckRatio < minFeeRatio) {
+        return {
+          pass: false,
+          reason: `Pool fee/active-TVL ${feeActiveTvlRatio ?? "unknown"} (5m) / ${recheckRatio ?? "unknown"} (30m) below minFeeActiveTvlRatio ${minFeeRatio}. Smart wallets do not override this floor.`,
+        };
+      }
+      log("safety", `Pool ${args.pool_address} passed 30m fee/TVL recheck (${recheckRatio}) despite low 5m (${feeActiveTvlRatio ?? "unknown"}) — allowing deploy`);
+    }
+  }
+
   const volatilityTimeframe = getVolatilityTimeframe(config.screening.timeframe || "5m");
   let volatilityDetail = detail;
   if ((config.screening.timeframe || "5m") !== volatilityTimeframe) {
