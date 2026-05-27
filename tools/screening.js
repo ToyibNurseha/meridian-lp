@@ -3,6 +3,7 @@ import { isBlacklisted } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
+import { recordSkip } from "../skip-tracker.js";
 import { confirmIndicatorPreset } from "./chart-indicators.js";
 import { getAgentMeridianBase, getAgentMeridianHeaders } from "./agent-meridian.js";
 import { getGeckoSignalMap } from "./gecko.js";
@@ -589,6 +590,26 @@ export async function discoverPools({
     if (!reason) return true;
     filteredExamples.push({ name: pool.name || pool.pool_address || "unknown pool", reason });
     if (pool.discord_signal) log("screening", `Discord signal filtered: ${pool.name || pool.pool_address} — ${reason}`);
+    try {
+      recordSkip({
+        pool: pool.pool_address,
+        name: pool.name,
+        reason,
+        source: "screening",
+        metrics: {
+          volatility: pool.volatility,
+          fee_active_tvl_ratio: pool.fee_active_tvl_ratio,
+          mcap: pool.mcap,
+          organic_score: pool.organic_score,
+          holders: pool.holders,
+          bin_step: pool.bin_step,
+          price_at_skip: pool.current_price ?? pool.price,
+          tvl: pool.tvl,
+          volume_window: pool.volume_window,
+          token_age_hours: pool.token_age_hours,
+        },
+      });
+    } catch {}
     return false;
   });
 

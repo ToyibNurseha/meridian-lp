@@ -175,6 +175,11 @@ export const config = {
     generalModel:    u.generalModel    ?? process.env.LLM_MODEL ?? "openrouter/healer-alpha",
   },
 
+  // ─── Auto-evolution (lessons.js threshold tuning) ───────
+  evolution: {
+    autoEvolveEnabled: u.autoEvolveEnabled ?? true, // set false to freeze maxVolatility / minFeeActiveTvlRatio / minOrganic
+  },
+
   // ─── Darwinian Signal Weighting ───────
   darwin: {
     enabled:        u.darwinEnabled     ?? true,

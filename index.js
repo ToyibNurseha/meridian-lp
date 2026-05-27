@@ -28,6 +28,7 @@ import { generateBriefing } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop, pruneClosedPositions } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memory.js";
+import { evaluateSkips, getSkipStats } from "./skip-tracker.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
 import { stageSignals } from "./signal-tracker.js";
@@ -773,6 +774,16 @@ Summarize the current portfolio health, total fees earned, and performance of al
     }
   });
 
+  // Hourly — evaluate skipped pools (what would have happened if we'd deployed)
+  const skipEvalTask = cron.schedule(`5 * * * *`, async () => {
+    try {
+      const result = await evaluateSkips();
+      if (result.updated > 0) log("cron", `Skip tracker: ${result.updated} outcome(s) updated, ${result.total_pending} pending`);
+    } catch (error) {
+      log("cron_error", `Skip eval failed: ${error.message}`);
+    }
+  }, { timezone: 'UTC' });
+
   // Morning Briefing at 8:00 AM UTC+7 (1:00 AM UTC)
   const briefingTask = cron.schedule(`0 1 * * *`, async () => {
     await runBriefing();
@@ -870,7 +881,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
     }
   }, 30_000);
 
-  _cronTasks = [mgmtTask, screenTask, healthTask, briefingTask, briefingWatchdog, smartWalletRefreshTask];
+  _cronTasks = [mgmtTask, screenTask, healthTask, skipEvalTask, briefingTask, briefingWatchdog, smartWalletRefreshTask];
   // Store interval ref so stopCronJobs can clear it
   _cronTasks._pnlPollInterval = pnlPollInterval;
   log("cron", `Cycles started — management every ${config.schedule.managementIntervalMin}m, screening every ${config.schedule.screeningIntervalMin}m`);
@@ -1368,6 +1379,7 @@ function formatHelpText() {
     "/settings — button menu for common config",
     "/setcfg <key> <value> — update persisted config",
     "/screen — refresh deterministic candidate list",
+    "/skipstats [days] — stats on pools we rejected (default 7d)",
     "/candidates — show latest cached candidates",
     "/deploy <n> — deploy candidate by cached index",
     "/briefing — morning briefing",
@@ -1650,6 +1662,35 @@ async function telegramHandler(msg) {
   if (text === "/screen") {
     try {
       await sendMessage(await runDeterministicScreen(5)).catch(() => {});
+    } catch (e) {
+      await sendMessage(`Error: ${e.message}`).catch(() => {});
+    }
+    return;
+  }
+
+  const skipStatsMatch = text.match(/^\/skipstats(?:\s+(\d+))?$/i);
+  if (skipStatsMatch) {
+    try {
+      const days = Number(skipStatsMatch[1]) || 7;
+      const stats = getSkipStats({ days });
+      if (stats.sample_count === 0) {
+        await sendMessage(`📊 Skip stats (${days}d): ${stats.message}`).catch(() => {});
+        return;
+      }
+      const lines = [`📊 Skip stats (last ${days}d, ${stats.sample_count} skips)`];
+      for (const h of ["1h", "4h", "24h"]) {
+        const s = stats[h];
+        if (!s) continue;
+        lines.push(`\n*${h}* (n=${s.samples}): avg ${s.avg_change_pct >= 0 ? "+" : ""}${s.avg_change_pct}% | ✅ ${s.wins_gt5} > +5% | ❌ ${s.losses_lt_neg5} < -5% | flat ${s.flat_within_5} | winrate ${s.win_rate}%`);
+      }
+      const reasons = Object.entries(stats.by_reason || {}).slice(0, 5);
+      if (reasons.length) {
+        lines.push("\n*Top reasons:*");
+        for (const [r, d] of reasons) {
+          lines.push(`• ${r}: n=${d.count}, avg4h ${d.avg_change_4h >= 0 ? "+" : ""}${d.avg_change_4h}%, wins ${d.wins}`);
+        }
+      }
+      await sendMessage(lines.join("\n")).catch(() => {});
     } catch (e) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     }
