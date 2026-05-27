@@ -51,11 +51,25 @@ export function listSmartWallets() {
   return { total: wallets.length, wallets };
 }
 
-// Cache wallet positions for 15 minutes to avoid hammering RPC
+// Cache wallet positions for 30 minutes to avoid hammering RPC
 const _cache = new Map(); // address -> { positions, fetchedAt }
-const CACHE_TTL = 15 * 60 * 1000;
-const FETCH_CONCURRENCY = 6;
-const FETCH_BATCH_DELAY_MS = 250;
+const CACHE_TTL = 30 * 60 * 1000;
+const FETCH_CONCURRENCY = 5;
+const FETCH_BATCH_DELAY_MS = 300;
+
+/**
+ * Lightweight pool-list lookup using Meteora portfolio API (no Solana RPC).
+ * Returns array of { pool: poolAddress } — enough for smart wallet confluence check.
+ * Avoids the heavy getProgramAccounts RPC call used by getWalletPositions.
+ */
+async function fetchWalletPoolList(walletAddress) {
+  const url = `https://dlmm.datapi.meteora.ag/portfolio/open?user=${walletAddress}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Portfolio API ${res.status}`);
+  const data = await res.json();
+  const pools = data?.pools || [];
+  return pools.map((p) => ({ pool: p.poolAddress }));
+}
 
 export async function checkSmartWalletsOnPool({ pool_address }) {
   const { wallets: allWallets } = loadWallets();
@@ -71,9 +85,7 @@ export async function checkSmartWalletsOnPool({ pool_address }) {
     };
   }
 
-  const { getWalletPositions } = await import("./tools/dlmm.js");
-
-  // Split into cached (instant) vs cold (needs RPC) — only batch the cold ones
+  // Split into cached vs cold — only fetch cold ones
   const cachedResults = [];
   const coldWallets = [];
   for (const wallet of wallets) {
@@ -85,16 +97,16 @@ export async function checkSmartWalletsOnPool({ pool_address }) {
     }
   }
 
-  // Batch cold fetches to avoid 429 from RPC. 77 wallets in parallel triggered rate-limit.
+  // Batch cold fetches via Meteora portfolio API (no Solana RPC = no 429).
   const coldResults = [];
   for (let i = 0; i < coldWallets.length; i += FETCH_CONCURRENCY) {
     const batch = coldWallets.slice(i, i + FETCH_CONCURRENCY);
     const batchResults = await Promise.all(
       batch.map(async (wallet) => {
         try {
-          const { positions } = await getWalletPositions({ wallet_address: wallet.address });
-          _cache.set(wallet.address, { positions: positions || [], fetchedAt: Date.now() });
-          return { wallet, positions: positions || [] };
+          const positions = await fetchWalletPoolList(wallet.address);
+          _cache.set(wallet.address, { positions, fetchedAt: Date.now() });
+          return { wallet, positions };
         } catch {
           return { wallet, positions: [] };
         }
