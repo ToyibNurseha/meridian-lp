@@ -642,12 +642,15 @@ ${candidateBlocks.join("\n\n")}
 STEPS:
 1. Decide if any candidate is actually worth deploying. One surviving candidate is not automatically good enough.
 2. Pick the best candidate based on narrative quality, smart wallets, and pool metrics.
-3. Call study_top_lpers on the chosen pool. Use the result as a gate:
-   - No data returned → neutral, proceed.
-   - avg win rate < 0.5 → REJECT this pool. Top LPers are consistently losing — bad pool.
+3. Verify the chosen pool is not already open (check pool_address against open positions above). If already deployed → NO DEPLOY, stop here.
+4. Call study_top_lpers on the chosen pool. Use the result as a gate AND to calibrate bins_below:
+   - No data returned → neutral, use formula bins_below, proceed.
+   - avg win rate < 0.5 → REJECT this pool. Top LPers consistently losing — bad pool.
    - avg hold < 0.5h AND avg win rate < 0.6 → REJECT. Pure scalper churn, not suitable.
-   - Otherwise → proceed. Note the top LPer range consensus in your deploy report.
-4. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
+   - If top LPers show a clear bin consensus from their positions: use the median bin count from winning LPers as bins_below, clamped to [${config.strategy.minBinsBelow}, ${config.strategy.maxBinsBelow}]. This overrides the formula.
+   - If no clear consensus or no winning positions with bin data → fall back to formula bins_below.
+   - Include top LPer avg hold and bin consensus in your deploy report.
+5. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
    bins_below formula:
      if volatility > ${config.strategy.highVolBinsBelowThreshold ?? 3.5} → bins_below = ${config.strategy.minBinsBelow} (high vol = fewer bins, less exposure during dumps)
      else → bins_below = round(${config.strategy.minBinsBelow} + (volatility/5)*(${config.strategy.maxBinsBelow - config.strategy.minBinsBelow})) clamped to [${config.strategy.minBinsBelow},${config.strategy.maxBinsBelow}]
