@@ -94,12 +94,12 @@ import { getDecisionSummary } from "./decision-log.js";
 // Supports OpenRouter (default) or any OpenAI-compatible local server (e.g. LM Studio)
 // To use LM Studio: set LLM_BASE_URL=http://localhost:1234/v1 and LLM_API_KEY=lm-studio in .env
 const client = new OpenAI({
-  baseURL: process.env.LLM_BASE_URL || "https://openrouter.ai/api/v1",
+  baseURL: process.env.LLM_BASE_URL || "https://token-plan-sgp.xiaomimimo.com/v1",
   apiKey: process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY,
   timeout: 5 * 60 * 1000,
 });
 
-const DEFAULT_MODEL = process.env.LLM_MODEL || "openrouter/healer-alpha";
+const DEFAULT_MODEL = process.env.LLM_MODEL || "mimo-v2.5-pro";
 
 const MUTATING_TOOL_INTENTS = /\b(deploy|open position|add liquidity|lp into|invest in|close|exit|withdraw|remove liquidity|claim|harvest|collect|swap|convert|sell|exchange|block|unblock|blacklist|add smart wallet|remove smart wallet|add wallet|remove wallet|pin|unpin|clear lesson|add lesson|set active strategy|remove strategy|add strategy|set |change |update |self.?update|pull latest|git pull|update yourself)\b/i;
 const LIVE_DATA_TOOL_INTENTS = /\b(balance|wallet|position|portfolio|pnl|yield|range|show positions|open positions|screen|candidate|find pool|search|research|analyze|check pool|token holders|narrative|study top|top lpers?|lp behavior|who.?s lping|performance|history|stats|report|list smart wallets|list blacklist|list blocked deployers|list lessons)\b/i;
@@ -195,7 +195,7 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
       const activeModel = model || DEFAULT_MODEL;
 
       // Retry up to 3 times on transient provider errors (502, 503, 529)
-      const FALLBACK_MODEL = "stepfun/step-3.5-flash:free";
+      const FALLBACK_MODEL = "mimo-v2-flash";
       let response;
       let usedModel = activeModel;
       // Force a tool call on step 0 for action intents — prevents the model from inventing deploy/close outcomes
@@ -231,6 +231,18 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
             omitToolChoice = true;
             log("agent", "Provider thinking mode does not support tool_choice — retrying without it");
             attempt -= 1;
+            continue;
+          }
+          const thrownCode = error?.status || error?.code;
+          if (thrownCode === 502 || thrownCode === 503 || thrownCode === 529) {
+            const wait = (attempt + 1) * 5000;
+            if (attempt === 1 && usedModel !== FALLBACK_MODEL) {
+              usedModel = FALLBACK_MODEL;
+              log("agent", `Switching to fallback model ${FALLBACK_MODEL} after thrown ${thrownCode}`);
+            } else {
+              log("agent", `Provider threw ${thrownCode}, retrying in ${wait / 1000}s (attempt ${attempt + 1}/3)`);
+              await new Promise((r) => setTimeout(r, wait));
+            }
             continue;
           }
           throw error;

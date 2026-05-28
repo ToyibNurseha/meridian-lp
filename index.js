@@ -644,7 +644,7 @@ STEPS:
 2. Pick the best candidate based on narrative quality, smart wallets, and pool metrics.
 3. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
    bins_below formula:
-     if volatility >= ${config.strategy.highVolBinsBelowThreshold ?? 2.5} → bins_below = ${config.strategy.maxBinsBelow} (force max range to absorb dumps)
+     if volatility > ${config.strategy.highVolBinsBelowThreshold ?? 3.5} → bins_below = ${config.strategy.minBinsBelow} (high vol = fewer bins, less exposure during dumps)
      else → bins_below = round(${config.strategy.minBinsBelow} + (volatility/5)*(${config.strategy.maxBinsBelow - config.strategy.minBinsBelow})) clamped to [${config.strategy.minBinsBelow},${config.strategy.maxBinsBelow}]
    pass deploy_position.volatility = the candidate volatility value.
    For single-side SOL deploys, do not invent upside:
@@ -960,6 +960,13 @@ function formatCandidates(candidates) {
 function getDeterministicCloseRule(position, managementConfig) {
   const tracked = getTrackedPosition(position.position);
   const pnlSuspect = (() => {
+    // API-side divergence guard: reported vs derived PnL differ by > pnlSanityMaxDiffPct.
+    // A stale/transient reading (e.g. -10% while the token is actually pumping) must NOT
+    // trigger an irreversible stop-loss/TP/time-stop close — defer one cycle until it settles.
+    if (position.pnl_pct_suspicious) {
+      log("cron_warn", `Suspect PnL for ${position.pair}: pnl_pct ${position.pnl_pct}% diverges from derived (diff ${position.pnl_pct_diff ?? "?"}%) — skipping PnL close rules this cycle`);
+      return true;
+    }
     if (position.pnl_pct == null) return false;
     if (position.pnl_pct > -90) return false;
     if (tracked?.amount_sol && (position.total_value_usd ?? 0) > 0.01) {
@@ -1102,7 +1109,7 @@ function formatConfigSnapshot() {
     `Flash dump: ${config.management.flashDumpEnabled ? "on" : "off"} | drop ${config.management.flashDumpDropPct}% / ${config.management.flashDumpWindowMin}m | big loss blacklist ${config.management.bigLossBlacklistPct}% / ${config.management.bigLossBlacklistHours}h`,
     `Vol-whipsaw guard: ${config.management.recentVolBlockMaxCount}x blocks in ${config.management.recentVolBlockWindowHours}h → reject`,
     `Smart-wallet gate: ${config.management.requireSmartWalletSignal ? "on" : "off"} | vol≥${config.management.smartWalletSignalVolThreshold} + amount>${config.management.smartWalletReducedDeploySol} SOL → require ≥1 wallet`,
-    `High-vol bin force: vol≥${config.strategy.highVolBinsBelowThreshold} → bins_below=${config.strategy.maxBinsBelow}`,
+    `High-vol bin cap: vol>${config.strategy.highVolBinsBelowThreshold} → bins_below=${config.strategy.minBinsBelow} (inverted)`,
     `Auto-evolve: ${config.evolution?.autoEvolveEnabled === false ? "off (frozen)" : "on"}`,
     `Screening: ${config.screening.category} / ${config.screening.timeframe} | TVL ${config.screening.minTvl}-${config.screening.maxTvl} | maxVol ${config.screening.maxVolatility ?? "off"} | maxRecentPump ${config.screening.maxRecentPumpPct ?? "off"}%`,
     `Intervals: manage ${config.schedule.managementIntervalMin}m | screen ${config.schedule.screeningIntervalMin}m`,
@@ -1840,6 +1847,9 @@ function computeBinsBelow(volatility) {
   }
   const lo = config.strategy.minBinsBelow;
   const hi = config.strategy.maxBinsBelow;
+  const threshold = config.strategy.highVolBinsBelowThreshold ?? 3.5;
+  // High volatility = fewer bins: less token accumulation during dumps
+  if (parsedVolatility > threshold) return lo;
   return Math.max(lo, Math.min(hi, Math.round(lo + (parsedVolatility / 5) * (hi - lo))));
 }
 
