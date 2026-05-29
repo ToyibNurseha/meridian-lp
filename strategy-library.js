@@ -89,6 +89,21 @@ const DEFAULT_STRATEGIES = {
     exit: { take_profit_pct: 10, notes: "When total return >= 10% of deployed capital: withdraw_liquidity(bps=5000) to take 50% off. Remaining 50% keeps running. Repeat at next threshold." },
     best_for: "Locking in profits without fully exiting winning positions",
   },
+  sol_bid_ask: {
+    id: "sol_bid_ask",
+    name: "SOL-Only Bid-Ask",
+    author: "meridian",
+    lp_strategy: "bid_ask",
+    token_criteria: { notes: "Volatile memecoins with active volume and positive net buyers or smart wallet support." },
+    entry: {
+      condition: "Deploy SOL-only (amount_y only, amount_x=0, bins_above=0). Bid-ask shape concentrates SOL at the bottom edge of the range — buys token heavily at lowest bins.",
+      single_side: "sol",
+      notes: "Never use amount_x. bins_above must always be 0. Bid-ask distribution means more SOL deployed at the bottom bins, less at the top — maximizes accumulation near the floor.",
+    },
+    range: { type: "default", bins_above: 0, notes: "All bins below active price. bins_above=0 always. Use volatility-scaled bins_below per screener formula." },
+    exit: { notes: "Standard OOR rules apply. After close, auto-swap base tokens to SOL. No reseed." },
+    best_for: "Volatile memecoins — SOL-only entry, bid_ask shape, captures fees on volatile swings, accumulates token at bottom bins if price dips.",
+  },
 };
 
 function ensureDefaultStrategies() {
