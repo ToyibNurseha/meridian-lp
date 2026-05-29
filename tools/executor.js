@@ -252,8 +252,10 @@ function normalizeConfigValue(key, value) {
     "solMode",
     "darwinEnabled",
     "lpAgentRelayEnabled",
+    "chartIndicatorsEnabled",
+    "requireAllIntervals",
   ]);
-  const arrayKeys = new Set(["allowedLaunchpads", "blockedLaunchpads"]);
+  const arrayKeys = new Set(["allowedLaunchpads", "blockedLaunchpads", "indicatorIntervals"]);
   const stringKeys = new Set([
     "timeframe",
     "category",
@@ -268,6 +270,8 @@ function normalizeConfigValue(key, value) {
     "hiveMindPullMode",
     "publicApiKey",
     "agentMeridianApiUrl",
+    "indicatorEntryPreset",
+    "indicatorExitPreset",
   ]);
   if (value === null) return null;
   if (booleanKeys.has(key)) return coerceBoolean(value, key);
