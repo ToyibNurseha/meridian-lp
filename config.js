@@ -94,6 +94,8 @@ export const config = {
     minTokenAgeHours:   u.minTokenAgeHours   ?? null, // null = no minimum
     maxTokenAgeHours:   u.maxTokenAgeHours   ?? null, // null = no maximum
     athFilterPct:       u.athFilterPct       ?? null, // e.g. -20 = only deploy if price is >= 20% below ATH
+    minNetBuyers:       u.minNetBuyers       ?? -300, // skip if 1h net_buyers < this (sell-pressure dominant); null = disabled
+    maxSellBuyRatio:    u.maxSellBuyRatio    ?? 3.0,  // skip if 1h sell_vol > this × buy_vol; null = disabled
   },
 
   // ─── Position Management ────────────────
@@ -304,6 +306,8 @@ export function reloadScreeningThresholds() {
     if (fresh.maxVolatility     !== undefined) s.maxVolatility = fresh.maxVolatility;
     if (fresh.allowedLaunchpads !== undefined) s.allowedLaunchpads = fresh.allowedLaunchpads;
     if (fresh.blockedLaunchpads !== undefined) s.blockedLaunchpads = fresh.blockedLaunchpads;
+    if (fresh.minNetBuyers    !== undefined) s.minNetBuyers    = fresh.minNetBuyers;
+    if (fresh.maxSellBuyRatio !== undefined) s.maxSellBuyRatio = fresh.maxSellBuyRatio;
     const minBinsBelow = numericConfig(fresh.minBinsBelow) ?? config.strategy.minBinsBelow;
     const maxBinsBelow = numericConfig(fresh.maxBinsBelow) ?? numericConfig(fresh.binsBelow) ?? config.strategy.maxBinsBelow;
     const defaultBinsBelow = numericConfig(fresh.defaultBinsBelow) ?? numericConfig(fresh.binsBelow) ?? config.strategy.defaultBinsBelow ?? maxBinsBelow;

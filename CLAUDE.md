@@ -77,6 +77,8 @@ Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant s
 | minBinStep / maxBinStep | screening | 80 / 125 |
 | timeframe | screening | "5m" |
 | category | screening | "trending" |
+| minNetBuyers | screening | -300 |
+| maxSellBuyRatio | screening | 3.0 |
 | minTokenFeesSol | screening | 30 |
 | maxBundlersPct | screening | 30 |
 | maxTop10Pct | screening | 60 |

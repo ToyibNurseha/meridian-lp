@@ -504,6 +504,24 @@ export async function runScreeningCycle({ silent = false } = {}) {
         filteredOut.push({ name: pool.name, reason: `1h pump +${priceChange1h}% retrace risk (no smart wallets, fee/TVL ${feeTvl ?? "?"}<1.5%)` });
         return false;
       }
+      // Sell pressure filter — dominant sellers with no smart wallet support = don't catch the knife
+      const netBuyers = ti?.stats_1h?.net_buyers;
+      const minNetBuyers = config.screening.minNetBuyers;
+      if (minNetBuyers != null && netBuyers != null && netBuyers < minNetBuyers && smartWalletCount === 0) {
+        log("screening", `Sell pressure filter: dropped ${pool.name} — net_buyers=${netBuyers} < ${minNetBuyers}, no smart wallet support`);
+        filteredOut.push({ name: pool.name, reason: `dominant sell pressure net_buyers=${netBuyers} (threshold ${minNetBuyers})` });
+        return false;
+      }
+      // Volume sell-dominance filter — sell vol >> buy vol = volume is exit-driven, not accumulation
+      const buyVol = Number(ti?.stats_1h?.buy_vol ?? 0);
+      const sellVol = Number(ti?.stats_1h?.sell_vol ?? 0);
+      const maxSellBuyRatio = config.screening.maxSellBuyRatio;
+      if (maxSellBuyRatio != null && buyVol > 0 && sellVol > buyVol * maxSellBuyRatio && smartWalletCount === 0) {
+        const ratio = (sellVol / buyVol).toFixed(1);
+        log("screening", `Volume collapse filter: dropped ${pool.name} — sell_vol=${sellVol} is ${ratio}x buy_vol=${buyVol} (max ${maxSellBuyRatio}x), no smart wallet support`);
+        filteredOut.push({ name: pool.name, reason: `volume sell-dominated sell/buy=${ratio}x (max ${maxSellBuyRatio}x)` });
+        return false;
+      }
       return true;
     });
 
