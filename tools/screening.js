@@ -502,8 +502,15 @@ export async function discoverPools({
 
   const seenAddresses = new Set();
   let rawPools = [];
-  for (const result of categoryResults) {
-    if (result.status !== "fulfilled") continue;
+  for (let i = 0; i < categoryResults.length; i++) {
+    const result = categoryResults[i];
+    if (result.status !== "fulfilled") {
+      log("screening", `Category [${categories[i]}] failed: ${result.reason?.message || "unknown"}`);
+      continue;
+    }
+    const returned = result.value?.data?.length ?? 0;
+    const total = result.value?.total ?? 0;
+    log("screening", `Category [${categories[i]}]: ${returned} returned (API total matching filters: ${total})`);
     for (const pool of (result.value?.data || [])) {
       const addr = pool?.pool_address;
       if (addr && !seenAddresses.has(addr)) {
