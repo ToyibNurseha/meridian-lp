@@ -1146,7 +1146,9 @@ function formatConfigSnapshot() {
     `Flash dump: ${config.management.flashDumpEnabled ? "on" : "off"} | drop ${config.management.flashDumpDropPct}% / ${config.management.flashDumpWindowMin}m | big loss blacklist ${config.management.bigLossBlacklistPct}% / ${config.management.bigLossBlacklistHours}h`,
     `Vol-whipsaw guard: ${config.management.recentVolBlockMaxCount}x blocks in ${config.management.recentVolBlockWindowHours}h → reject`,
     `Smart-wallet gate: ${config.management.requireSmartWalletSignal ? "on" : "off"} | vol≥${config.management.smartWalletSignalVolThreshold} + amount>${config.management.smartWalletReducedDeploySol} SOL → require ≥1 wallet`,
-    `High-vol bin cap: vol>${config.strategy.highVolBinsBelowThreshold} → bins_below=${config.strategy.minBinsBelow} (inverted)`,
+    config.strategy.strategy === "spot"
+      ? `Bins formula: spot | range [${config.strategy.minBinsBelow}-${config.strategy.maxBinsBelow}] | high-vol cap disabled`
+      : `High-vol bin cap: vol>${config.strategy.highVolBinsBelowThreshold} → bins_below=${config.strategy.minBinsBelow} (bid_ask)`,
     `Auto-evolve: ${config.evolution?.autoEvolveEnabled === false ? "off (frozen)" : "on"}`,
     `Screening: ${config.screening.category} / ${config.screening.timeframe} | TVL ${config.screening.minTvl}-${config.screening.maxTvl} | maxVol ${config.screening.maxVolatility ?? "off"} | maxRecentPump ${config.screening.maxRecentPumpPct ?? "off"}%`,
     `Intervals: manage ${config.schedule.managementIntervalMin}m | screen ${config.schedule.screeningIntervalMin}m`,
