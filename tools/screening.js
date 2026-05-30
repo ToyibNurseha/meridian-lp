@@ -5,6 +5,7 @@ import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { recordSkip } from "../skip-tracker.js";
 import { confirmIndicatorPreset } from "./chart-indicators.js";
+import { getVolumeSignal } from "./dexscreener.js";
 import { getAgentMeridianBase, getAgentMeridianHeaders } from "./agent-meridian.js";
 import { getGeckoSignalMap } from "./gecko.js";
 
@@ -1031,6 +1032,16 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     });
     eligible.splice(0, eligible.length, ...filtered);
     if (eligible.length < before) log("dev_blocklist", `Filtered ${before - eligible.length} pool(s) via OKX creator check`);
+  }
+
+  // Enrich with DexScreener volume trend — passive signal, no hard filter
+  if (eligible.length > 0) {
+    const volResults = await Promise.allSettled(
+      eligible.map((pool) => getVolumeSignal(pool.pool))
+    );
+    volResults.forEach((r, i) => {
+      eligible[i].dex_volume = r.status === "fulfilled" ? r.value : null;
+    });
   }
 
   if (config.indicators.enabled && eligible.length > 0) {
