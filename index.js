@@ -1152,7 +1152,7 @@ function formatConfigSnapshot() {
       ? `Bins formula: spot | range [${config.strategy.minBinsBelow}-${config.strategy.maxBinsBelow}] | high-vol cap disabled`
       : `High-vol bin cap: vol>${config.strategy.highVolBinsBelowThreshold} → bins_below=${config.strategy.minBinsBelow} (bid_ask)`,
     `Auto-evolve: ${config.evolution?.autoEvolveEnabled === false ? "off (frozen)" : "on"}`,
-    `Screening: ${config.screening.category} / ${config.screening.timeframe} | TVL ${config.screening.minTvl}-${config.screening.maxTvl} | maxVol ${config.screening.maxVolatility ?? "off"} | maxRecentPump ${config.screening.maxRecentPumpPct ?? "off"}%`,
+    `Screening: ${config.screening.category} / ${config.screening.timeframe} | TVL ${config.screening.minTvl}-${config.screening.maxTvl} | Mcap ${config.screening.minMcap}-${config.screening.maxMcap} | maxVol ${config.screening.maxVolatility ?? "off"} | maxRecentPump ${config.screening.maxRecentPumpPct ?? "off"}%`,
     `Intervals: manage ${config.schedule.managementIntervalMin}m | screen ${config.schedule.screeningIntervalMin}m`,
     `HiveMind: ${isHiveMindEnabled() ? "enabled" : "disabled"}${config.hiveMind.agentId ? ` | ${config.hiveMind.agentId}` : ""}`,
   ].join("\n");
