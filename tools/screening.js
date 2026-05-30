@@ -465,7 +465,7 @@ async function refreshDiscordOnlyPools(pools, timeframe) {
  * Returns condensed data optimized for LLM consumption (saves tokens).
  */
 export async function discoverPools({
-  page_size = 50,
+  page_size = 100,
 } = {}) {
   const s = config.screening;
   const filters = [
@@ -492,14 +492,27 @@ export async function discoverPools({
       : null,
   ].filter(Boolean).join("&&");
 
-  const data = await fetchPoolDiscoveryPage({
-    page_size,
-    filters,
-    timeframe: s.timeframe,
-    category: s.category,
-  });
+  const categories = s.category === "trending+new"
+    ? ["trending", "new"]
+    : [s.category || "trending"];
 
-  let rawPools = Array.isArray(data.data) ? data.data : [];
+  const categoryResults = await Promise.allSettled(
+    categories.map((cat) => fetchPoolDiscoveryPage({ page_size, filters, timeframe: s.timeframe, category: cat }))
+  );
+
+  const seenAddresses = new Set();
+  let rawPools = [];
+  for (const result of categoryResults) {
+    if (result.status !== "fulfilled") continue;
+    for (const pool of (result.value?.data || [])) {
+      const addr = pool?.pool_address;
+      if (addr && !seenAddresses.has(addr)) {
+        seenAddresses.add(addr);
+        rawPools.push(pool);
+      }
+    }
+  }
+  log("screening", `Fetched ${rawPools.length} unique pools from [${categories.join("+")}]`);
 
   if (config.screening.useDiscordSignals) {
     const signalCandidates = await fetchDiscordSignalCandidates().catch((error) => {
@@ -815,7 +828,7 @@ export async function discoverPools({
  */
 export async function getTopCandidates({ limit = 10 } = {}) {
   const { config } = await import("../config.js");
-  const discovery = await discoverPools({ page_size: 50 });
+  const discovery = await discoverPools({ page_size: 100 });
   const { pools } = discovery;
   const filteredOut = Array.isArray(discovery.filtered_examples) ? [...discovery.filtered_examples] : [];
 
