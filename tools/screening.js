@@ -247,6 +247,7 @@ async function fetchPoolDiscoveryPage({ page_size, filters, timeframe, category 
     `&timeframe=${timeframe}` +
     `&category=${category}`;
 
+  log("screening", `API call [${category}/${timeframe}]: ${decodeURIComponent(url.split("filter_by=")[1]?.split("&")[0] ?? "").replace(/&&/g, " | ")}`);
   const res = await fetch(url);
 
   if (!res.ok) {
