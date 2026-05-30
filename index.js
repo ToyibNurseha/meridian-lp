@@ -743,7 +743,7 @@ STEPS:
 IMPORTANT:
 - Never write "unknown" for OKX. Use real values, omit missing fields, or write exactly "OKX: unavailable".
 - Keep the whole report compact and highly scannable for Telegram.
-      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048, {
+      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, config.llm.maxTokens ?? 4096, {
         onToolStart: async ({ name }) => {
           if (name === "deploy_position") deployAttempted = true;
           await liveMessage?.toolStart(name);
