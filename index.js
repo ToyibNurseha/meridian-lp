@@ -1433,6 +1433,7 @@ function formatHelpText() {
     "/settings — button menu for common config",
     "/setcfg <key> <value> — update persisted config",
     "/screen — refresh deterministic candidate list",
+    "/scan — trigger full screening cycle now",
     "/skipstats [days] — stats on pools we rejected (default 7d)",
     "/candidates — show latest cached candidates",
     "/deploy <n> — deploy candidate by cached index",
@@ -1715,6 +1716,16 @@ async function telegramHandler(msg) {
     } catch (e) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     }
+    return;
+  }
+
+  if (text === "/scan") {
+    if (_screeningBusy) {
+      await sendMessage("⏳ Screening already in progress.").catch(() => {});
+      return;
+    }
+    await sendMessage("🔍 Manual screening cycle triggered...").catch(() => {});
+    runScreeningCycle({ silent: false }).catch((e) => sendMessage(`Screening error: ${e.message}`).catch(() => {}));
     return;
   }
 
