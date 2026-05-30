@@ -294,7 +294,7 @@ export async function runManagementCycle({ silent = false } = {}) {
       const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
       let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}%${pnlVal} | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
       if (p.instruction) line += `\nNote: "${p.instruction}"`;
-      if (act.action === "CLOSE" && act.rule === "exit") line += `\n⚡ Trailing TP: ${act.reason}`;
+      if (act.action === "CLOSE" && act.rule === "exit") line += act.reason?.toLowerCase().includes("yield") ? `\n📉 Exit: ${act.reason}` : `\n⚡ Trailing TP: ${act.reason}`;
       if (act.action === "CLOSE" && act.rule && act.rule !== "exit") line += `\nRule ${act.rule}: ${act.reason}`;
       if (act.action === "CLAIM") line += `\n→ Claiming fees`;
       return line;
@@ -309,21 +309,33 @@ export async function runManagementCycle({ silent = false } = {}) {
     mgmtReport = reportLines.join("\n\n") +
       `\n\nSummary: 💼 ${positions.length} positions | ${cur}${totalValue.toFixed(4)} | fees: ${cur}${totalUnclaimed.toFixed(4)} | ${actionSummary}`;
 
-    // ── Call LLM only if action needed ──────────────────────────────
-    const actionPositions = positionData.filter(p => {
+    // ── Execute deterministic CLOSE actions directly (no LLM) ────────
+    const directClosePositions = positionData.filter(p => actionMap.get(p.position)?.action === "CLOSE");
+    const llmActionPositions = positionData.filter(p => {
       const a = actionMap.get(p.position);
-      return a.action !== "STAY";
+      return a.action === "CLAIM" || a.action === "INSTRUCTION";
     });
 
-    if (actionPositions.length > 0) {
-      log("cron", `Management: ${actionPositions.length} action(s) needed — invoking LLM [model: ${config.llm.managementModel}]`);
+    for (const p of directClosePositions) {
+      const act = actionMap.get(p.position);
+      const reasonLabel = act.rule === "exit" ? act.reason : `Rule ${act.rule}: ${act.reason}`;
+      log("cron", `Management: direct close ${p.pair} — ${reasonLabel}`);
+      await liveMessage?.toolStart("close_position");
+      const result = await executeTool("close_position", { position_address: p.position, reason: reasonLabel });
+      await liveMessage?.toolFinish("close_position", result, result?.success !== false);
+      mgmtReport += `\n\n${p.pair}: ${result?.success !== false ? `closed (${reasonLabel})` : `close failed — ${result?.error || "unknown"}`}`;
+    }
 
-      const actionBlocks = actionPositions.map((p) => {
+    // ── Call LLM only for CLAIM / INSTRUCTION ────────────────────────
+    if (llmActionPositions.length > 0) {
+      log("cron", `Management: ${llmActionPositions.length} LLM action(s) needed — invoking LLM [model: ${config.llm.managementModel}]`);
+
+      const actionBlocks = llmActionPositions.map((p) => {
         const act = actionMap.get(p.position);
         return [
           `POSITION: ${p.pair} (${p.position})`,
           `  pool: ${p.pool}`,
-          `  action: ${act.action}${act.rule && act.rule !== "exit" ? ` — Rule ${act.rule}: ${act.reason}` : ""}${act.rule === "exit" ? ` — ⚡ Trailing TP: ${act.reason}` : ""}`,
+          `  action: ${act.action}`,
           `  pnl_pct: ${p.pnl_pct}% | unclaimed_fees: ${cur}${p.unclaimed_fees_usd} | value: ${cur}${p.total_value_usd} | fee_per_tvl_24h: ${p.fee_per_tvl_24h ?? "?"}%`,
           `  bins: lower=${p.lower_bin} upper=${p.upper_bin} active=${p.active_bin} | oor_minutes: ${p.minutes_out_of_range ?? 0}`,
           p.instruction ? `  instruction: "${p.instruction}"` : null,
@@ -331,26 +343,23 @@ export async function runManagementCycle({ silent = false } = {}) {
       }).join("\n\n");
 
       const { content } = await agentLoop(`
-MANAGEMENT ACTION REQUIRED — ${actionPositions.length} position(s)
+MANAGEMENT ACTION REQUIRED — ${llmActionPositions.length} position(s)
 
 ${actionBlocks}
 
 RULES:
-- CLOSE: call close_position only — it handles fee claiming internally, do NOT call claim_fees first
-- CLOSE: ALWAYS pass the "reason" parameter using the exact rule/exit reason from above (e.g. "Rule 3: pumped far above range", "Trailing TP: peak ...", "stop loss"). This is required for Telegram notification + pool memory.
 - CLAIM: call claim_fees with position address
-- INSTRUCTION: evaluate the instruction condition. If met → close_position. If not → HOLD, do nothing.
-- ⚡ exit alerts: close immediately, no exceptions
+- INSTRUCTION: evaluate the instruction condition. If met → close_position with reason. If not → HOLD, do nothing.
 
-Execute the required actions. Do NOT re-evaluate CLOSE/CLAIM — rules already applied. Just execute.
+Execute the required actions. Do NOT re-evaluate — rules already applied. Just execute.
 After executing, write a brief one-line result per position.
-      `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, 2048, {
+      `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, config.llm.maxTokens ?? 4096, {
         onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
         onToolFinish: async ({ name, result, success }) => { await liveMessage?.toolFinish(name, result, success); },
       });
 
       mgmtReport += `\n\n${content}`;
-    } else {
+    } else if (directClosePositions.length === 0) {
       log("cron", "Management: all positions STAY — skipping LLM");
       await liveMessage?.note("No tool actions needed.");
     }
@@ -1052,7 +1061,7 @@ function getDeterministicCloseRule(position, managementConfig) {
   if (
     position.fee_per_tvl_24h != null &&
     position.fee_per_tvl_24h < managementConfig.minFeePerTvl24h &&
-    (position.age_minutes ?? 0) >= 60
+    (position.age_minutes ?? 0) >= (managementConfig.minAgeBeforeYieldCheck ?? 60)
   ) {
     return { action: "CLOSE", rule: 5, reason: "low yield" };
   }
