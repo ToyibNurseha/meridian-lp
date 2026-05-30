@@ -679,8 +679,10 @@ STEPS:
    - Include top LPer avg hold and bin consensus in your deploy report.
 5. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
    bins_below formula:
-     if volatility > ${config.strategy.highVolBinsBelowThreshold ?? 3.5} → bins_below = ${config.strategy.minBinsBelow} (high vol = fewer bins, less exposure during dumps)
-     else → bins_below = round(${config.strategy.minBinsBelow} + (volatility/5)*(${config.strategy.maxBinsBelow - config.strategy.minBinsBelow})) clamped to [${config.strategy.minBinsBelow},${config.strategy.maxBinsBelow}]
+     ${config.strategy.strategy === "spot"
+       ? `bins_below = round(${config.strategy.minBinsBelow} + (volatility/5)*(${config.strategy.maxBinsBelow - config.strategy.minBinsBelow})) clamped to [${config.strategy.minBinsBelow},${config.strategy.maxBinsBelow}] (spot: higher vol = wider range to stay in range)`
+       : `if volatility > ${config.strategy.highVolBinsBelowThreshold ?? 3.5} → bins_below = ${config.strategy.minBinsBelow} (bid_ask: high vol = fewer bins, less dump exposure)\n     else → bins_below = round(${config.strategy.minBinsBelow} + (volatility/5)*(${config.strategy.maxBinsBelow - config.strategy.minBinsBelow})) clamped to [${config.strategy.minBinsBelow},${config.strategy.maxBinsBelow}]`
+     }
    pass deploy_position.volatility = the candidate volatility value.
    For single-side SOL deploys, do not invent upside:
    set amount_y only, keep amount_x = 0, keep bins_above = 0, and let the upper bin stay at the active bin.
@@ -1883,8 +1885,10 @@ function computeBinsBelow(volatility) {
   const lo = config.strategy.minBinsBelow;
   const hi = config.strategy.maxBinsBelow;
   const threshold = config.strategy.highVolBinsBelowThreshold ?? 3.5;
-  // High volatility = fewer bins: less token accumulation during dumps
-  if (parsedVolatility > threshold) return lo;
+  const isSpot = config.strategy.strategy === "spot";
+  // bid_ask: high vol = fewer bins (less token accumulation during dumps)
+  // spot: no cap — formula naturally gives more bins for higher vol (wider range = stay in range longer)
+  if (!isSpot && parsedVolatility > threshold) return lo;
   return Math.max(lo, Math.min(hi, Math.round(lo + (parsedVolatility / 5) * (hi - lo))));
 }
 
