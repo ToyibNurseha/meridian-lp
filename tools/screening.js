@@ -993,6 +993,22 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     });
   }
 
+  // Pump gate using DexScreener as fallback for Helius-injected pools where
+  // pool_price_change_pct is null (bypasses the earlier getRawPoolScreeningRejectReason gate)
+  const maxPump = config.screening.maxRecentPumpPct;
+  if (maxPump != null && Number.isFinite(maxPump) && maxPump > 0) {
+    const before = eligible.length;
+    eligible = eligible.filter((pool) => {
+      if (pool.price_change_pct != null) return true; // already checked in getRawPoolScreeningRejectReason
+      const dexChange = pool.dex_volume?.price_change_h1;
+      if (dexChange == null || !Number.isFinite(dexChange) || dexChange <= maxPump) return true;
+      log("screening", `Pump gate (dex fallback): dropped ${pool.name} — 1h +${dexChange}% > maxRecentPumpPct ${maxPump}%`);
+      pushFilteredReason(filteredOut, pool, `recent pump +${dexChange.toFixed(1)}% > maxRecentPumpPct ${maxPump}% (dex signal)`);
+      return false;
+    });
+    if (eligible.length < before) log("screening", `Pump gate removed ${before - eligible.length} candidate(s) via DexScreener fallback`);
+  }
+
   if (config.indicators.enabled && eligible.length > 0) {
     const confirmations = await Promise.all(
       eligible.map(async (pool) => {
