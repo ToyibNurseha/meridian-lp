@@ -762,6 +762,13 @@ export async function executeTool(name, args) {
 async function runSafetyChecks(name, args) {
   switch (name) {
     case "deploy_position": {
+      // Validate base_mint is a Solana address, not a ticker symbol
+      if (args.base_mint != null && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(args.base_mint))) {
+        return {
+          pass: false,
+          reason: `base_mint "${args.base_mint}" is not a valid Solana address. Pass the mint address, not the token symbol.`,
+        };
+      }
       const poolThresholds = await validateDeployPoolThresholds(args);
       if (!poolThresholds.pass) return poolThresholds;
 
