@@ -213,8 +213,12 @@ export async function runManagementCycle({ silent = false } = {}) {
     if (!silent && telegramEnabled()) {
       liveMessage = await createLiveMessage("🔄 Management Cycle", "Evaluating positions...");
     }
-    const livePositions = await getMyPositions({ force: true }).catch(() => null);
+    const [livePositions, walletInfo] = await Promise.all([
+      getMyPositions({ force: true }).catch(() => null),
+      getWalletBalances().catch(() => null),
+    ]);
     positions = livePositions?.positions || [];
+    const solPrice = walletInfo?.sol_price ?? 0;
 
     if (positions.length === 0) {
       log("cron", "No open positions — triggering screening cycle");
@@ -281,34 +285,87 @@ export async function runManagementCycle({ silent = false } = {}) {
     }
 
     // ── Build JS report ──────────────────────────────────────────────
-    const totalValue = positionData.reduce((s, p) => s + (p.total_value_usd ?? 0), 0);
-    const totalUnclaimed = positionData.reduce((s, p) => s + (p.unclaimed_fees_usd ?? 0), 0);
+    const toSol = (usd) => solPrice > 0 ? (usd / solPrice) : null;
+    const fmtSol = (sol, decimals = 4) => sol != null ? `◎${Number(sol).toFixed(decimals)}` : "◎?";
+    const fmtUsd = (usd) => usd != null ? `$${Number(usd).toFixed(2)}` : "$?";
+    const fmtPct = (p, sign = true) => p != null ? `${sign && p >= 0 ? "+" : ""}${Number(p).toFixed(2)}%` : "?%";
+    const binBar = (lower, active, upper, width = 20) => {
+      if (lower == null || upper == null || active == null || upper <= lower) return null;
+      const pct = Math.max(0, Math.min(100, Math.round((active - lower) / (upper - lower) * 100)));
+      const filled = Math.round(pct / 100 * width);
+      return `[${"▓".repeat(filled)}${"░".repeat(width - filled)}] ${pct}%`;
+    };
 
-    const reportLines = positionData.map((p) => {
+    const totalValue = positionData.reduce((s, p) => s + (p.total_value_usd ?? 0), 0);
+    const totalPnl = positionData.reduce((s, p) => s + (p.pnl_usd ?? 0), 0);
+    const totalUnclaimed = positionData.reduce((s, p) => s + (p.unclaimed_fees_usd ?? 0), 0);
+    const totalValueSol = toSol(totalValue);
+    const totalPnlSol = toSol(totalPnl);
+    const totalPnlPct = totalValue > 0 ? (totalPnl / (totalValue - totalPnl)) * 100 : 0;
+    const utcTime = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+
+    const header = [
+      `🔄 LP Cycle  •  ${utcTime}${solPrice > 0 ? `  •  SOL ${fmtUsd(solPrice)}` : ""}`,
+      ``,
+      `📊 PORTFOLIO  (${positions.length} position${positions.length !== 1 ? "s" : ""})`,
+      `Value:    ${fmtSol(totalValueSol)}  (${fmtUsd(totalValue)})`,
+      `PnL:      ${fmtSol(totalPnlSol, 5)}  (${fmtPct(totalPnlPct)})`,
+      `Fees:     ${fmtSol(toSol(totalUnclaimed), 5)} unclaimed`,
+    ].join("\n");
+
+    const positionLines = positionData.map((p, i) => {
       const act = actionMap.get(p.position);
       const inRange = p.in_range ? "🟢 IN" : `🔴 OOR ${p.minutes_out_of_range ?? 0}m`;
-      const curSym = config.management.solMode ? "◎" : "$";
-      const val = `${curSym}${p.total_value_usd ?? "?"}`;
-      const unclaimed = `${curSym}${p.unclaimed_fees_usd ?? "?"}`;
+      const actionLabel = act.action === "INSTRUCTION" ? "EVAL" : act.action;
+      const strategy = p.strategy ?? config.strategy.strategy;
+      const binCount = (p.upper_bin != null && p.lower_bin != null) ? (p.upper_bin - p.lower_bin) : null;
+      const bar = binBar(p.lower_bin, p.active_bin, p.upper_bin);
+      const valSol = toSol(p.total_value_usd ?? 0);
+      const pnlSol = toSol(p.pnl_usd ?? 0);
+      const uncSol = toSol(p.unclaimed_fees_usd ?? 0);
       const pnlSign = (p.pnl_usd ?? 0) >= 0 ? "+" : "";
-      const pnlVal = p.pnl_usd != null ? ` (${pnlSign}${curSym}${Number(p.pnl_usd).toFixed(2)})` : "";
-      const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
-      let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}%${pnlVal} | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
-      if (p.instruction) line += `\nNote: "${p.instruction}"`;
-      if (act.action === "CLOSE" && act.rule === "exit") line += act.reason?.toLowerCase().includes("yield") ? `\n📉 Exit: ${act.reason}` : `\n⚡ Trailing TP: ${act.reason}`;
-      if (act.action === "CLOSE" && act.rule && act.rule !== "exit") line += `\nRule ${act.rule}: ${act.reason}`;
-      if (act.action === "CLAIM") line += `\n→ Claiming fees`;
-      return line;
+
+      let decisionNote = "";
+      if (act.action === "CLOSE") {
+        decisionNote = act.rule === "exit"
+          ? (act.reason?.toLowerCase().includes("yield") ? `📉 ${act.reason}` : `⚡ ${act.reason}`)
+          : `Rule ${act.rule}: ${act.reason}`;
+      } else if (act.action === "CLAIM") {
+        decisionNote = `claim ${fmtUsd(p.unclaimed_fees_usd)} in fees`;
+      } else if (act.action === "INSTRUCTION") {
+        decisionNote = `eval: "${p.instruction}"`;
+      } else {
+        decisionNote = p.in_range ? "in-range, holding" : `OOR ${p.minutes_out_of_range}m`;
+      }
+
+      return [
+        `─────────────────────────────`,
+        `[${i + 1}] ${p.pair}  ${inRange}  →  ${actionLabel}`,
+        `Age ${p.age_minutes ?? "?"}m  •  ${strategy}  •  ${binCount != null ? `${binCount} bins` : "?"}`,
+        bar ? bar : null,
+        ``,
+        `Val:   ${fmtSol(valSol)} (${fmtUsd(p.total_value_usd)})`,
+        p.amount_sol != null ? `Entry: ◎${Number(p.amount_sol).toFixed(4)}` : null,
+        `PnL:   ${fmtSol(pnlSol, 5)} (${pnlSign}${fmtPct(p.pnl_pct, false)})`,
+        `Fees:  ${fmtSol(uncSol, 5)} unclaimed`,
+        `Yield: ${p.fee_per_tvl_24h ?? "?"}% (24h)`,
+        p.instruction ? `Note:  "${p.instruction}"` : null,
+        ``,
+        `Decision: ${actionLabel} — ${decisionNote}`,
+      ].filter(l => l != null).join("\n");
     });
 
     const needsAction = [...actionMap.values()].filter(a => a.action !== "STAY");
     const actionSummary = needsAction.length > 0
       ? needsAction.map(a => a.action === "INSTRUCTION" ? "EVAL instruction" : `${a.action}${a.reason ? ` (${a.reason})` : ""}`).join(", ")
-      : "no action";
+      : "none this cycle";
 
-    const cur = config.management.solMode ? "◎" : "$";
-    mgmtReport = reportLines.join("\n\n") +
-      `\n\nSummary: 💼 ${positions.length} positions | ${cur}${totalValue.toFixed(4)} | fees: ${cur}${totalUnclaimed.toFixed(4)} | ${actionSummary}`;
+    mgmtReport = [
+      header,
+      ...positionLines,
+      `─────────────────────────────`,
+      `🎯 ACTIONS: ${actionSummary}`,
+    ].join("\n");
 
     // ── Execute deterministic CLOSE actions directly (no LLM) ────────
     const directClosePositions = positionData.filter(p => actionMap.get(p.position)?.action === "CLOSE");
@@ -337,7 +394,7 @@ export async function runManagementCycle({ silent = false } = {}) {
           `POSITION: ${p.pair} (${p.position})`,
           `  pool: ${p.pool}`,
           `  action: ${act.action}`,
-          `  pnl_pct: ${p.pnl_pct}% | unclaimed_fees: ${cur}${p.unclaimed_fees_usd} | value: ${cur}${p.total_value_usd} | fee_per_tvl_24h: ${p.fee_per_tvl_24h ?? "?"}%`,
+          `  pnl_pct: ${p.pnl_pct}% | unclaimed_fees: ◎${toSol(p.unclaimed_fees_usd)?.toFixed(5) ?? "?"} ($${p.unclaimed_fees_usd}) | value: ◎${toSol(p.total_value_usd)?.toFixed(4) ?? "?"} ($${p.total_value_usd}) | fee_per_tvl_24h: ${p.fee_per_tvl_24h ?? "?"}%`,
           `  bins: lower=${p.lower_bin} upper=${p.upper_bin} active=${p.active_bin} | oor_minutes: ${p.minutes_out_of_range ?? 0}`,
           p.instruction ? `  instruction: "${p.instruction}"` : null,
         ].filter(Boolean).join("\n");
@@ -680,6 +737,7 @@ STEPS:
    - If no clear consensus or no winning positions with bin data → fall back to formula bins_below.
    - Include top LPer avg hold and bin consensus in your deploy report.
 5. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
+   ALWAYS pass strategy = "${config.strategy.strategy}" — do not use any other value.
    bins_below formula:
      ${config.strategy.strategy === "spot"
        ? `bins_below = round(${config.strategy.minBinsBelow} + (volatility/5)*(${config.strategy.maxBinsBelow - config.strategy.minBinsBelow})) clamped to [${config.strategy.minBinsBelow},${config.strategy.maxBinsBelow}] (spot: higher vol = wider range to stay in range)`
@@ -724,6 +782,9 @@ STEPS:
    <If OKX advanced/risk data exists, list only the fields that actually exist: Risk level, Bundle, Sniper, Suspicious, ATH distance, Rugpull, Wash.>
    <If only rugpull/wash exist, list just those.>
    <If OKX enrichment is missing, write exactly: OKX: unavailable>
+
+   STRATEGY
+   Type: ${config.strategy.strategy} | Why: <1 sentence on why this strategy fits this pool's current conditions>
 
    WHY THIS WON
    <2-4 concise sentences on why this pool won, key risks, and why it still beat the alternatives>
