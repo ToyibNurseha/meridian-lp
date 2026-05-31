@@ -602,6 +602,19 @@ export async function discoverPools({
         for (let i = 0; i < unmatched.length; i++) {
           const detail = details[i].status === "fulfilled" ? details[i].value : null;
           if (!detail?.pool_address) continue;
+          if (s.maxTokenAgeHours != null && detail.base_token_created_at != null) {
+            const ageH = (Date.now() - detail.base_token_created_at) / 3_600_000;
+            if (ageH > s.maxTokenAgeHours) {
+              log("screening", `Helius inject skip: ${detail.name || detail.pool_address?.slice(0, 8)} — age ${Math.round(ageH)}h > maxTokenAgeHours ${s.maxTokenAgeHours}`);
+              continue;
+            }
+          }
+          if (s.minFeeActiveTvlRatio != null && detail.fee_active_tvl_ratio != null) {
+            if (detail.fee_active_tvl_ratio < s.minFeeActiveTvlRatio) {
+              log("screening", `Helius inject skip: ${detail.name || detail.pool_address?.slice(0, 8)} — fee/TVL ${detail.fee_active_tvl_ratio}% < min ${s.minFeeActiveTvlRatio}%`);
+              continue;
+            }
+          }
           byPool.set(detail.pool_address, {
             ...detail,
             helius_signal: true,

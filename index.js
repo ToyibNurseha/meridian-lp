@@ -725,6 +725,11 @@ Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${
 PRE-LOADED CANDIDATES (${passing.length} pools):
 ${candidateBlocks.join("\n\n")}
 
+HARD GATES (check before anything else — these are NO DEPLOY regardless of other metrics):
+- fee_active_tvl_ratio < 1% → skip. Pool not generating enough fees to cover IL.
+- token age > 168h (7 days) → skip. Token past its active trading window.
+- Only 1 candidate AND fee_active_tvl_ratio < 3% → NO DEPLOY. Do not force a deploy on a lone weak candidate.
+
 STEPS:
 1. Decide if any candidate is actually worth deploying. One surviving candidate is not automatically good enough.
 2. Pick the best candidate based on narrative quality, smart wallets, and pool metrics.
