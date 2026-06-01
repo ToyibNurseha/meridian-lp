@@ -769,6 +769,14 @@ async function runSafetyChecks(name, args) {
           reason: `base_mint "${args.base_mint}" is not a valid Solana address. Pass the mint address, not the token symbol.`,
         };
       }
+      // Reject non-SOL quote tokens — agent is SOL-only, USDC/other pairs will fail on insufficient funds
+      const SOL_MINT = "So11111111111111111111111111111111111111112";
+      if (args.quote_mint && args.quote_mint !== SOL_MINT && args.quote_mint !== "SOL") {
+        return {
+          pass: false,
+          reason: `quote_mint "${args.quote_mint}" is not SOL. Only SOL-paired pools are supported (wallet holds no USDC/other tokens).`,
+        };
+      }
       const poolThresholds = await validateDeployPoolThresholds(args);
       if (!poolThresholds.pass) return poolThresholds;
 
