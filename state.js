@@ -472,22 +472,12 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     }
   }
 
-  // ── Stop loss (volatility-scaled) ─────────────────────────────
-  // High-vol tokens dump fast — tighten SL to limit slow-bleed losses (HONTER pattern)
+  // ── Stop loss ──────────────────────────────────────────────────
   if (!pnl_pct_suspicious && currentPnlPct != null && mgmtConfig.stopLossPct != null) {
-    const baseSL = mgmtConfig.stopLossPct; // e.g. -10
-    const posVol = Number(pos.volatility);
-    let scaledSL = baseSL;
-    if (Number.isFinite(posVol) && posVol > 0) {
-      if (posVol >= 6) scaledSL = Math.max(baseSL, -6);
-      else if (posVol >= 4) scaledSL = Math.max(baseSL, -8);
-      else if (posVol >= 2.5) scaledSL = Math.max(baseSL, -10);
-      // else: baseSL unchanged for low-vol tokens
-    }
-    if (currentPnlPct <= scaledSL) {
+    if (currentPnlPct <= mgmtConfig.stopLossPct) {
       return {
         action: "STOP_LOSS",
-        reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${scaledSL}%${scaledSL !== baseSL ? ` (vol-scaled from ${baseSL}%, vol=${posVol})` : ""}`,
+        reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.stopLossPct}%`,
       };
     }
   }
