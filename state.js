@@ -68,6 +68,7 @@ export function trackPosition({
   organic_score,
   initial_value_usd,
   signal_snapshot = null,
+  entry_tvl = null,
 }) {
   const state = load();
   state.positions[position] = {
@@ -85,6 +86,7 @@ export function trackPosition({
     initial_fee_tvl_24h: fee_tvl_ratio,
     organic_score,
     initial_value_usd,
+    entry_tvl: entry_tvl || null,
     signal_snapshot: signal_snapshot || null,
     deployed_at: new Date().toISOString(),
     out_of_range_since: null,
@@ -403,7 +405,7 @@ export function getStateSummary() {
  * Returns { action, reason } or null if no exit needed.
  */
 export function updatePnlAndCheckExits(position_address, positionData, mgmtConfig) {
-  const { pnl_pct: currentPnlPct, pnl_pct_suspicious, pnl_usd, in_range, fee_per_tvl_24h } = positionData;
+  const { pnl_pct: currentPnlPct, pnl_pct_suspicious, pnl_usd, in_range, fee_per_tvl_24h, current_tvl } = positionData;
   const state = load();
   const pos = state.positions[position_address];
   if (!pos || pos.closed) return null;
@@ -577,6 +579,25 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
       return {
         action: "LOW_YIELD",
         reason: `Low yield: fee/TVL ${fee_per_tvl_24h.toFixed(2)}% < min ${mgmtConfig.minFeePerTvl24h}% (age: ${age_minutes ?? "?"}m)`,
+      };
+    }
+  }
+
+  // ── Rule 7: Whale exit — TVL collapsed since entry ─────────────
+  const whaleTvlDropPct = mgmtConfig.whaleTvlDropPct;
+  const whaleTvlMinAge = mgmtConfig.whaleTvlMinAgeMinutes ?? 15;
+  if (
+    whaleTvlDropPct != null &&
+    current_tvl != null &&
+    pos.entry_tvl != null &&
+    pos.entry_tvl > 0 &&
+    (age_minutes == null || age_minutes >= whaleTvlMinAge)
+  ) {
+    const tvlDropPct = ((pos.entry_tvl - current_tvl) / pos.entry_tvl) * 100;
+    if (tvlDropPct >= whaleTvlDropPct) {
+      return {
+        action: "WHALE_EXIT",
+        reason: `Whale exit: TVL -${tvlDropPct.toFixed(0)}% since entry ($${pos.entry_tvl.toFixed(0)}→$${current_tvl.toFixed(0)})`,
       };
     }
   }

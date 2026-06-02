@@ -447,6 +447,8 @@ const toolMap = {
       flashDumpWindowMin: ["management", "flashDumpWindowMin"],
       timeStopHours: ["management", "timeStopHours"],
       timeStopUnderwaterPct: ["management", "timeStopUnderwaterPct"],
+      whaleTvlDropPct: ["management", "whaleTvlDropPct"],
+      whaleTvlMinAgeMinutes: ["management", "whaleTvlMinAgeMinutes"],
       // risk
       maxPositions: ["risk", "maxPositions"],
       maxDeployAmount: ["risk", "maxDeployAmount"],

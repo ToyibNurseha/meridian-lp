@@ -191,6 +191,7 @@ WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
           base_fee: { type: "number", description: "Pool base fee percentage (from discover_pools)" },
           volatility: { type: "number", description: "Pool volatility at deploy time, sourced from max(screening timeframe, 30m)" },
           fee_tvl_ratio: { type: "number", description: "fee/TVL ratio at deploy time" },
+          pool_tvl: { type: "number", description: "Pool total TVL in USD at deploy time — used for whale exit detection" },
           organic_score: { type: "number", description: "Base token organic score at deploy time" },
           initial_value_usd: { type: "number", description: "Estimated USD value being deployed" }
         },

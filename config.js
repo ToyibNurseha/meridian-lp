@@ -135,6 +135,8 @@ export const config = {
     minClosePnlUsd:        u.minClosePnlUsd        ?? 0.20,  // gate LOW_YIELD close when |pnl_usd| below this
     timeStopHours:         u.timeStopHours         ?? 5,    // Rule 6: close after this many hours if underwater
     timeStopUnderwaterPct: u.timeStopUnderwaterPct ?? -5,   // Rule 6: pnl_pct threshold for stale + underwater close
+    whaleTvlDropPct:       u.whaleTvlDropPct       ?? 35,   // Rule 7: close if pool TVL drops this % since entry (whale exit)
+    whaleTvlMinAgeMinutes: u.whaleTvlMinAgeMinutes ?? 15,   // Rule 7: min position age before whale check fires
     deadDeployMinutes:     u.deadDeployMinutes     ?? 40,   // dead-deploy age threshold
     deadDeployMinPnlPct:   u.deadDeployMinPnlPct   ?? 0,    // require PnL >= this to close dead deploy; otherwise wait for green
     minSolToOpen:          u.minSolToOpen          ?? 0.55,

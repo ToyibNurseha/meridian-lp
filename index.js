@@ -7,7 +7,7 @@ import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
 import { getMyPositions, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
-import { getTopCandidates } from "./tools/screening.js";
+import { getTopCandidates, getPoolDetail } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
 import { executeTool, registerCronRestarter } from "./tools/executor.js";
@@ -233,6 +233,18 @@ export async function runManagementCycle({ silent = false } = {}) {
       return { ...p, recall: recallForPool(p.pool) };
     });
 
+    // Fetch current pool TVL for whale exit detection (Rule 7) — parallel, best-effort
+    const whaleTvlEnabled = config.management.whaleTvlDropPct != null;
+    if (whaleTvlEnabled) {
+      const tvlResults = await Promise.allSettled(
+        positionData.map((p) => getPoolDetail({ pool_address: p.pool }).catch(() => null))
+      );
+      for (let i = 0; i < positionData.length; i++) {
+        const poolDetail = tvlResults[i].status === "fulfilled" ? tvlResults[i].value : null;
+        positionData[i] = { ...positionData[i], current_tvl: poolDetail?.tvl ?? poolDetail?.active_tvl ?? null };
+      }
+    }
+
     // JS trailing TP check
     const exitMap = new Map();
     for (const p of positionData) {
@@ -285,9 +297,13 @@ export async function runManagementCycle({ silent = false } = {}) {
     }
 
     // ── Build JS report ──────────────────────────────────────────────
-    const toSol = (usd) => solPrice > 0 ? (usd / solPrice) : null;
+    // When solMode=true, dlmm returns SOL values in _usd fields — skip USD→SOL conversion
+    const solMode = config.management.solMode;
+    const toSol = solMode ? (val) => (val != null ? val : null) : (usd) => solPrice > 0 ? (usd / solPrice) : null;
+    const toUsd = solMode ? (sol) => (sol != null && solPrice > 0 ? sol * solPrice : null) : (usd) => usd;
     const fmtSol = (sol, decimals = 4) => sol != null ? `◎${Number(sol).toFixed(decimals)}` : "◎?";
     const fmtUsd = (usd) => usd != null ? `$${Number(usd).toFixed(2)}` : "$?";
+    const fmtUsdVal = (val) => fmtUsd(toUsd(val));
     const fmtPct = (p, sign = true) => p != null ? `${sign && p >= 0 ? "+" : ""}${Number(p).toFixed(2)}%` : "?%";
     const binBar = (lower, active, upper, width = 20) => {
       if (lower == null || upper == null || active == null || upper <= lower) return null;
@@ -308,7 +324,7 @@ export async function runManagementCycle({ silent = false } = {}) {
       `🔄 LP Cycle  •  ${utcTime}${solPrice > 0 ? `  •  SOL ${fmtUsd(solPrice)}` : ""}`,
       ``,
       `📊 PORTFOLIO  (${positions.length} position${positions.length !== 1 ? "s" : ""})`,
-      `Value:    ${fmtSol(totalValueSol)}  (${fmtUsd(totalValue)})`,
+      `Value:    ${fmtSol(totalValueSol)}  (${fmtUsdVal(totalValue)})`,
       `PnL:      ${fmtSol(totalPnlSol, 5)}  (${fmtPct(totalPnlPct)})`,
       `Fees:     ${fmtSol(toSol(totalUnclaimed), 5)} unclaimed`,
     ].join("\n");
@@ -331,7 +347,7 @@ export async function runManagementCycle({ silent = false } = {}) {
           ? (act.reason?.toLowerCase().includes("yield") ? `📉 ${act.reason}` : `⚡ ${act.reason}`)
           : `Rule ${act.rule}: ${act.reason}`;
       } else if (act.action === "CLAIM") {
-        decisionNote = `claim ${fmtUsd(p.unclaimed_fees_usd)} in fees`;
+        decisionNote = `claim ${fmtUsdVal(p.unclaimed_fees_usd)} in fees`;
       } else if (act.action === "INSTRUCTION") {
         decisionNote = `eval: "${p.instruction}"`;
       } else {
@@ -344,10 +360,10 @@ export async function runManagementCycle({ silent = false } = {}) {
         `Age ${p.age_minutes ?? "?"}m  •  ${strategy}  •  ${binCount != null ? `${binCount} bins` : "?"}`,
         bar ? bar : null,
         ``,
-        `Val:   ${fmtSol(valSol)} (${fmtUsd(p.total_value_usd)})`,
+        `Val:   ${fmtSol(valSol)} (${fmtUsdVal(p.total_value_usd)})`,
         p.amount_sol != null ? `Entry: ◎${Number(p.amount_sol).toFixed(4)}` : null,
-        `PnL:   ${fmtSol(pnlSol, 5)} (${pnlSign}${fmtPct(p.pnl_pct, false)}) / ${fmtUsd(p.pnl_usd)}`,
-        `Fees:  ${fmtSol(uncSol, 5)} / ${fmtUsd(p.unclaimed_fees_usd)} unclaimed`,
+        `PnL:   ${fmtSol(pnlSol, 5)} (${pnlSign}${fmtPct(p.pnl_pct, false)}) / ${fmtUsdVal(p.pnl_usd)}`,
+        `Fees:  ${fmtSol(uncSol, 5)} / ${fmtUsdVal(p.unclaimed_fees_usd)} unclaimed`,
         `Yield: ${p.fee_per_tvl_24h ?? "?"}% (24h)`,
         p.instruction ? `Note:  "${p.instruction}"` : null,
         ``,

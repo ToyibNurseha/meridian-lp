@@ -464,6 +464,7 @@ export async function deployPosition({
   base_fee,
   volatility,
   fee_tvl_ratio,
+  pool_tvl,
   organic_score,
   initial_value_usd,
 }) {
@@ -696,6 +697,7 @@ export async function deployPosition({
           bin_step,
           volatility: normalizedVolatility,
           fee_tvl_ratio,
+          entry_tvl: pool_tvl ?? null,
           organic_score,
           amount_sol: finalAmountY,
           amount_x: finalAmountX,
@@ -834,6 +836,7 @@ export async function deployPosition({
       bin_step,
       volatility: normalizedVolatility,
       fee_tvl_ratio,
+      entry_tvl: pool_tvl ?? null,
       organic_score,
       amount_sol: finalAmountY,
       amount_x: finalAmountX,
