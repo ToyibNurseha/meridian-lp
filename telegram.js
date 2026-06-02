@@ -535,8 +535,6 @@ export async function notifyClose({ pair, pnlUsd, pnlPct, feesUsd = 0, initialUs
   if (feesUsd || initialUsd) {
     lines.push(`Fees: $${(feesUsd ?? 0).toFixed(2)} | IL: ${ilUsd >= 0 ? "+" : ""}$${ilUsd.toFixed(2)}`);
   }
-  lines.push(`Gas est: ~$${gasUsd.toFixed(2)} (◎${gasSol.toFixed(4)}, ${txCount || 3} tx)`);
-  lines.push(`<b>Net: ${netSign}$${netUsd.toFixed(2)}</b>`);
   if (minutesHeld != null) {
     const m = Math.max(0, Math.round(Number(minutesHeld)));
     const hold = m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
