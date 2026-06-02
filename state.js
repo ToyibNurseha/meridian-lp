@@ -597,7 +597,7 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     if (tvlDropPct >= whaleTvlDropPct) {
       return {
         action: "WHALE_EXIT",
-        reason: `Whale exit: TVL -${tvlDropPct.toFixed(0)}% since entry ($${pos.entry_tvl.toFixed(0)}→$${current_tvl.toFixed(0)})`,
+        reason: `Rule 7: Whale exit: TVL -${tvlDropPct.toFixed(0)}% since entry ($${pos.entry_tvl.toFixed(0)}→$${current_tvl.toFixed(0)})`,
       };
     }
   }
