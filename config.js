@@ -12,7 +12,7 @@ const DEFAULT_HIVEMIND_API_KEY = DEFAULT_AGENT_MERIDIAN_PUBLIC_KEY;
 const u = fs.existsSync(USER_CONFIG_PATH)
   ? JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8"))
   : {};
-export const MIN_SAFE_BINS_BELOW = 35;
+export const MIN_SAFE_BINS_BELOW = 20;
 
 function numericConfig(value) {
   const n = Number(value);
