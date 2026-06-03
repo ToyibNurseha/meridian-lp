@@ -742,7 +742,7 @@ PRE-LOADED CANDIDATES (${passing.length} pools):
 ${candidateBlocks.join("\n\n")}
 
 HARD GATES (check before anything else — these are NO DEPLOY regardless of other metrics):
-- fee_active_tvl_ratio < 1% → skip. Pool not generating enough fees to cover IL.
+- fee_active_tvl_ratio < ${config.screening.minFeeActiveTvlRatio}% → skip. Pool not generating enough fees to cover IL.
 ${config.screening.maxTokenAgeHours != null ? `- token age > ${config.screening.maxTokenAgeHours}h → skip. Token past its active trading window.\n` : ""}- Only 1 candidate AND fee_active_tvl_ratio < 3% → NO DEPLOY. Do not force a deploy on a lone weak candidate.
 
 STEPS:
