@@ -144,7 +144,8 @@ async function validateDeployPoolThresholds(args) {
     log("safety", `Pool ${args.pool_address} passed long-window recheck (1h fee/aTVL=${longFee}, vol=${longVolume}) — allowing deploy despite zero short-window`);
   }
 
-  const minFeeRatio = Number(config.screening.minFeeActiveTvlRatio);
+  // Config minFeeActiveTvlRatio is in percent (e.g. 0.5 = 0.5%); raw API value is decimal (0.005 = 0.5%). Convert.
+  const minFeeRatio = Number(config.screening.minFeeActiveTvlRatio) / 100;
   if (Number.isFinite(minFeeRatio) && minFeeRatio > 0) {
     if (feeActiveTvlRatio == null || feeActiveTvlRatio < minFeeRatio) {
       let recheckDetail = null;

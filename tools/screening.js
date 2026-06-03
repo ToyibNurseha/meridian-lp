@@ -124,8 +124,9 @@ function getRawPoolScreeningRejectReason(pool, s) {
   if (s.maxTvl != null && tvl > s.maxTvl) return `TVL ${tvl} above maxTvl ${s.maxTvl}`;
   if (binStep == null || binStep < s.minBinStep) return `bin_step ${binStep ?? "unknown"} below minBinStep ${s.minBinStep}`;
   if (binStep > s.maxBinStep) return `bin_step ${binStep} above maxBinStep ${s.maxBinStep}`;
-  if (feeActiveTvlRatio == null || feeActiveTvlRatio < s.minFeeActiveTvlRatio) {
-    return `fee/active-TVL ${feeActiveTvlRatio ?? "unknown"} below minFeeActiveTvlRatio ${s.minFeeActiveTvlRatio}`;
+  // Config is in percent (0.5 = 0.5%); raw API value is decimal (0.005 = 0.5%). Convert.
+  if (feeActiveTvlRatio == null || feeActiveTvlRatio < s.minFeeActiveTvlRatio / 100) {
+    return `fee/active-TVL ${feeActiveTvlRatio ?? "unknown"} below minFeeActiveTvlRatio ${s.minFeeActiveTvlRatio}%`;
   }
   if (!isUsableVolatility(volatility)) {
     return `volatility ${volatility ?? "unknown"} is unusable`;
@@ -486,7 +487,7 @@ export async function discoverPools({
     s.maxTvl != null ? `tvl<=${s.maxTvl}` : null,
     `dlmm_bin_step>=${s.minBinStep}`,
     `dlmm_bin_step<=${s.maxBinStep}`,
-    `fee_active_tvl_ratio>=${s.minFeeActiveTvlRatio}`,
+    `fee_active_tvl_ratio>=${s.minFeeActiveTvlRatio / 100}`,
     `base_token_organic_score>=${s.minOrganic}`,
     `quote_token_organic_score>=${s.minQuoteOrganic}`,
     s.minTokenAgeHours != null ? `base_token_created_at<=${Date.now() - s.minTokenAgeHours * 3_600_000}` : null,
@@ -613,8 +614,9 @@ export async function discoverPools({
             }
           }
           if (s.minFeeActiveTvlRatio != null && detail.fee_active_tvl_ratio != null) {
-            if (detail.fee_active_tvl_ratio < s.minFeeActiveTvlRatio) {
-              log("screening", `Helius inject skip: ${detail.name || detail.pool_address?.slice(0, 8)} — fee/TVL ${detail.fee_active_tvl_ratio}% < min ${s.minFeeActiveTvlRatio}%`);
+            // Config is in percent (0.5 = 0.5%); raw API value is decimal. Convert config / 100.
+            if (detail.fee_active_tvl_ratio < s.minFeeActiveTvlRatio / 100) {
+              log("screening", `Helius inject skip: ${detail.name || detail.pool_address?.slice(0, 8)} — fee/TVL ${(detail.fee_active_tvl_ratio * 100).toFixed(4)}% < min ${s.minFeeActiveTvlRatio}%`);
               continue;
             }
           }
@@ -792,7 +794,8 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const occupiedMints = new Set(positions.map((p) => p.base_mint).filter(Boolean));
   const minTvl = Number(config.screening.minTvl ?? 0);
   const maxTvl = config.screening.maxTvl == null ? null : Number(config.screening.maxTvl);
-  const minFeeActiveTvlRatio = Number(config.screening.minFeeActiveTvlRatio ?? 0);
+  // Config is in percent (0.5 = 0.5%); raw API value is decimal (0.005). Divide config by 100 to compare.
+  const minFeeActiveTvlRatio = Number(config.screening.minFeeActiveTvlRatio ?? 0) / 100;
 
   let eligible = pools
     .filter((p) => {
