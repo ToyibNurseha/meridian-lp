@@ -449,6 +449,8 @@ const toolMap = {
       timeStopUnderwaterPct: ["management", "timeStopUnderwaterPct"],
       whaleTvlDropPct: ["management", "whaleTvlDropPct"],
       whaleTvlMinAgeMinutes: ["management", "whaleTvlMinAgeMinutes"],
+      deadDeployMinutes: ["management", "deadDeployMinutes"],
+      deadDeployMinPnlPct: ["management", "deadDeployMinPnlPct"],
       // risk
       maxPositions: ["risk", "maxPositions"],
       maxDeployAmount: ["risk", "maxDeployAmount"],
