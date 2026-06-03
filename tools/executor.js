@@ -245,6 +245,9 @@ function normalizeConfigValue(key, value) {
   const booleanKeys = new Set([
     "excludeHighSupplyConcentration",
     "useDiscordSignals",
+    "useGeckoSignals",
+    "useBitquerySignals",
+    "useHeliusSignals",
     "avoidPvpSymbols",
     "blockPvpSymbols",
     "autoSwapAfterClaim",
@@ -254,6 +257,7 @@ function normalizeConfigValue(key, value) {
     "lpAgentRelayEnabled",
     "chartIndicatorsEnabled",
     "requireAllIntervals",
+    "requireSmartWalletSignal",
   ]);
   const arrayKeys = new Set(["allowedLaunchpads", "blockedLaunchpads", "indicatorIntervals"]);
   const stringKeys = new Set([
@@ -408,6 +412,17 @@ const toolMap = {
       maxTokenAgeHours: ["screening", "maxTokenAgeHours"],
       athFilterPct:     ["screening", "athFilterPct"],
       maxVolatility:    ["screening", "maxVolatility"],
+      maxRecentPumpPct: ["screening", "maxRecentPumpPct"],
+      minNetBuyers:     ["screening", "minNetBuyers"],
+      maxSellBuyRatio:  ["screening", "maxSellBuyRatio"],
+      staticRejectCooldownHours: ["screening", "staticRejectCooldownHours"],
+      useGeckoSignals:  ["screening", "useGeckoSignals"],
+      useBitquerySignals: ["screening", "useBitquerySignals"],
+      useHeliusSignals: ["screening", "useHeliusSignals"],
+      requireSmartWalletSignal: ["management", "requireSmartWalletSignal"],
+      smartWalletReducedDeploySol: ["management", "smartWalletReducedDeploySol"],
+      smartWalletSignalVolThreshold: ["management", "smartWalletSignalVolThreshold"],
+      highVolBinsBelowThreshold: ["strategy", "highVolBinsBelowThreshold"],
       minFeePerTvl24h: ["management", "minFeePerTvl24h"],
       // management
       minClaimAmount: ["management", "minClaimAmount"],
