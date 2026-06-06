@@ -1,6 +1,13 @@
 import { agentMeridianJson, getAgentMeridianHeaders } from "./agent-meridian.js";
 
+const STUDY_CACHE_TTL_MS = 30 * 60 * 1000;
+const studyCache = new Map();
+
 export async function studyTopLPers({ pool_address, limit = 4 }) {
+  const cached = studyCache.get(pool_address);
+  if (cached && Date.now() - cached.ts < STUDY_CACHE_TTL_MS) {
+    return cached.data;
+  }
   const [poolRes, signalRes] = await Promise.all([
     fetchTopLp(pool_address),
     fetchStudyTopLp(pool_address),
@@ -13,12 +20,9 @@ export async function studyTopLPers({ pool_address, limit = 4 }) {
   const ranked = topLpers.slice(0, Math.max(1, limit));
 
   if (!ranked.length) {
-    return {
-      pool: pool_address,
-      message: "No LPAgent top LPer data found for this pool yet.",
-      patterns: {},
-      lpers: [],
-    };
+    const empty = { pool: pool_address, message: "No LPAgent top LPer data found for this pool yet.", patterns: {}, lpers: [] };
+    studyCache.set(pool_address, { ts: Date.now(), data: empty });
+    return empty;
   }
 
   const historicalMap = new Map(historicalOwners.map((owner) => [owner.owner, owner]));
@@ -71,7 +75,7 @@ export async function studyTopLPers({ pool_address, limit = 4 }) {
 
   const patterns = buildPatterns(ranked, historicalOwners, signalData, poolData.overview || {});
 
-  return {
+  const result = {
     pool: pool_address,
     pool_name:
       poolData.overview?.name ||
@@ -81,17 +85,21 @@ export async function studyTopLPers({ pool_address, limit = 4 }) {
     patterns,
     lpers,
   };
+  studyCache.set(pool_address, { ts: Date.now(), data: result });
+  return result;
 }
 
 function fetchTopLp(poolAddress) {
   return agentMeridianJson(`/top-lp/${poolAddress}`, {
     headers: getAgentMeridianHeaders(),
+    retry: { maxElapsedMs: 30_000, perAttemptTimeoutMs: 10_000 },
   });
 }
 
 function fetchStudyTopLp(poolAddress) {
   return agentMeridianJson(`/study-top-lp/${poolAddress}`, {
     headers: getAgentMeridianHeaders(),
+    retry: { maxElapsedMs: 30_000, perAttemptTimeoutMs: 10_000 },
   });
 }
 
