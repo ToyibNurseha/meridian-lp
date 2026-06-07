@@ -538,28 +538,30 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     }
   }
 
-  // ── Time-decay no-fee exit — confirmed zero fees after deadDeployMinutes = dead deploy
-  // BUT only close when PnL >= deadDeployMinPnlPct (default 0). Otherwise wait for green
-  // to avoid locking in small losses. Time-stop Rule 6 acts as backstop for stale negatives.
+  // ── Time-decay no-fee exit — pool truly dead if TOTAL lifetime fees (claimed + pending) are tiny
+  // Use total_fees_claimed_usd from state + current unclaimed to avoid false triggers when fees
+  // were just claimed moments before the check window expires.
   const { age_minutes, unclaimed_fees_usd } = positionData;
   const deadDeployMin = Number(mgmtConfig.deadDeployMinutes ?? 40);
   const deadDeployMinPnl = Number(mgmtConfig.deadDeployMinPnlPct ?? 0);
-  const deadFeeThreshold = 0.05; // < $0.05 unclaimed = effectively dead
+  const deadFeeThreshold = 0.05; // total lifetime fees < $0.05 = effectively dead
+  const claimedSoFar = pos.total_fees_claimed_usd || 0;
+  const totalFeesEarned = claimedSoFar + (unclaimed_fees_usd ?? 0);
   if (
     age_minutes != null &&
     age_minutes >= deadDeployMin &&
-    unclaimed_fees_usd != null && unclaimed_fees_usd < deadFeeThreshold
+    totalFeesEarned < deadFeeThreshold
   ) {
     if (
       !pnl_pct_suspicious &&
       currentPnlPct != null &&
       currentPnlPct < deadDeployMinPnl
     ) {
-      log("state", `Position ${position_address} dead-deploy hold: PnL ${currentPnlPct.toFixed(2)}% < ${deadDeployMinPnl}%, fees $${unclaimed_fees_usd?.toFixed(3) ?? 0} — waiting for green (time-stop Rule 6 is backstop)`);
+      log("state", `Position ${position_address} dead-deploy hold: PnL ${currentPnlPct.toFixed(2)}% < ${deadDeployMinPnl}%, total fees $${totalFeesEarned.toFixed(3)} — waiting for green (time-stop Rule 6 is backstop)`);
     } else {
       return {
         action: "NO_FEES",
-        reason: `Dead deploy: fees $${unclaimed_fees_usd?.toFixed(3) ?? 0} < $${deadFeeThreshold} after ${age_minutes}m, PnL ${currentPnlPct != null ? currentPnlPct.toFixed(2) + "%" : "n/a"}`,
+        reason: `Dead deploy: total fees $${totalFeesEarned.toFixed(3)} (claimed $${claimedSoFar.toFixed(3)} + pending $${(unclaimed_fees_usd ?? 0).toFixed(3)}) < $${deadFeeThreshold} after ${age_minutes}m, PnL ${currentPnlPct != null ? currentPnlPct.toFixed(2) + "%" : "n/a"}`,
       };
     }
   }
