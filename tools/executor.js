@@ -356,7 +356,8 @@ const toolMap = {
   unblock_deployer: unblockDev,
   list_blocked_deployers: listBlockedDevs,
   add_lesson: ({ rule, tags, pinned, role }) => {
-    addLesson(rule, tags || [], { pinned: !!pinned, role: role || null });
+    const normalizedTags = Array.isArray(tags) ? tags : typeof tags === "string" && tags ? tags.split(/[,\s]+/).map(t => t.trim()).filter(Boolean) : [];
+    addLesson(rule, normalizedTags, { pinned: !!pinned, role: role || null });
     return { saved: true, rule, pinned: !!pinned, role: role || "all" };
   },
   pin_lesson:   ({ id }) => pinLesson(id),

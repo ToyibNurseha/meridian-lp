@@ -659,7 +659,8 @@ export function getLessonsForPrompt(opts = {}) {
       // Include if: lesson has no role restriction OR matches this role
       const roleOk = !l.role || l.role === agentType || agentType === "GENERAL";
       // Include if: lesson has role-relevant tags OR no tags (general)
-      const tagOk  = roleTags.length === 0 || !l.tags?.length || l.tags.some((t) => roleTags.includes(t));
+      const lessonTags = Array.isArray(l.tags) ? l.tags : [];
+      const tagOk  = roleTags.length === 0 || !lessonTags.length || lessonTags.some((t) => roleTags.includes(t));
       return roleOk && tagOk;
     })
     .sort(byPriority)
