@@ -46,7 +46,9 @@ function scoreCandidate(pool) {
   const heliusBoost = pool.helius_signal ? 300 + (Array.isArray(pool.helius_signers) ? pool.helius_signers.length * 50 : 0) : 0;
   // Volume-top boost: appeared in top pools by raw volume — high activity regardless of trending algo
   const volumeTopBoost = pool.volume_top_signal ? 75 : 0;
-  return base + geckoBoost + bitqueryBoost + heliusBoost + volumeTopBoost;
+  // GMGN trending: token appearing in GMGN market rank = strong buy-side momentum signal
+  const gmgnBoost = pool.gmgn_signal ? 125 : 0;
+  return base + geckoBoost + bitqueryBoost + heliusBoost + volumeTopBoost + gmgnBoost;
 }
 
 function numeric(value) {
@@ -260,6 +262,32 @@ async function fetchPoolDiscoveryPage({ page_size, filters, timeframe, category 
   }
 
   return res.json();
+}
+
+async function fetchGmgnTrending({ interval = "1h", limit = 50 } = {}) {
+  const apiKey = process.env.GMGN_API_KEY;
+  if (!apiKey) return [];
+  const timestamp = Math.floor(Date.now() / 1000);
+  const clientId = `${timestamp}-${Math.random().toString(36).slice(2, 10)}`;
+  const url = `https://openapi.gmgn.ai/v1/market/rank?chain=sol&interval=${interval}&limit=${limit}&timestamp=${timestamp}&client_id=${encodeURIComponent(clientId)}`;
+  const res = await fetch(url, { headers: { "X-APIKEY": apiKey, "Content-Type": "application/json" } });
+  if (!res.ok) throw new Error(`GMGN market/rank ${res.status}`);
+  const data = await res.json();
+  if (String(data.code) !== "0") throw new Error(`GMGN error: ${data.error || data.message}`);
+  // Response: { code:0, data: { code:0, data: { rank: [...] } } }
+  const rank = data?.data?.data?.rank ?? data?.data?.rank ?? data?.data;
+  return Array.isArray(rank) ? rank : [];
+}
+
+async function fetchBestPoolForMint(mint, timeframe) {
+  const url = `https://dlmm.datapi.meteora.ag/pools?query=${encodeURIComponent(mint)}&sort_by=${encodeURIComponent("tvl:desc")}&filter_by=${encodeURIComponent("pool_type=dlmm")}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`pool search by mint ${res.status}`);
+  const data = await res.json();
+  const pools = Array.isArray(data?.data) ? data.data : [];
+  const best = pools.find((p) => p?.token_x?.address === mint);
+  if (!best?.pool_address) return null;
+  return fetchPoolDiscoveryDetail({ poolAddress: best.pool_address, timeframe });
 }
 
 async function fetchPoolDiscoveryByVolume({ page_size, timeframe, s }) {
@@ -734,6 +762,56 @@ export async function discoverPools({
     }
   }
 
+  if (config.screening.useGmgnSource !== false && process.env.GMGN_API_KEY) {
+    try {
+      const gmgnTokens = await fetchGmgnTrending({ interval: "1h", limit: 50 });
+      if (gmgnTokens.length > 0) {
+        const byPool = new Map(rawPools.map((p) => [p.pool_address, p]));
+        const byMint = new Map(rawPools.map((p) => [getPoolBaseMint(p), p]).filter(([m]) => m));
+
+        // Tag existing pools whose base token is trending on GMGN
+        const gmgnMints = new Set(gmgnTokens.map((t) => t?.address).filter(Boolean));
+        let autoTagged = 0;
+        for (const pool of rawPools) {
+          if (!pool.gmgn_signal && gmgnMints.has(getPoolBaseMint(pool))) {
+            pool.gmgn_signal = true;
+            autoTagged++;
+          }
+        }
+        if (autoTagged > 0) log("screening", `GMGN: tagged ${autoTagged} existing pool(s) with gmgn_signal`);
+
+        // For tokens not yet in our pool list, look up their best Meteora pool and inject
+        const newTokens = gmgnTokens
+          .filter((t) => t?.address && !byMint.has(t.address))
+          .slice(0, 20);
+
+        if (newTokens.length > 0) {
+          const details = await Promise.allSettled(
+            newTokens.map((t) => fetchBestPoolForMint(t.address, s.timeframe))
+          );
+          let injected = 0;
+          let dupeTagged = 0;
+          for (let i = 0; i < newTokens.length; i++) {
+            const detail = details[i].status === "fulfilled" ? details[i].value : null;
+            if (!detail?.pool_address) continue;
+            if (byPool.has(detail.pool_address)) {
+              byPool.get(detail.pool_address).gmgn_signal = true;
+              dupeTagged++;
+            } else {
+              byPool.set(detail.pool_address, { ...detail, gmgn_signal: true });
+              injected++;
+            }
+          }
+          rawPools = Array.from(byPool.values());
+          if (injected > 0) log("screening", `GMGN: injected ${injected} trending token pool(s)`);
+          if (dupeTagged > 0) log("screening", `GMGN: tagged ${dupeTagged} more pool(s) via mint lookup`);
+        }
+      }
+    } catch (error) {
+      log("screening", `GMGN source fetch failed: ${error.message}`);
+    }
+  }
+
   const filteredExamples = [];
   const thresholdedRawPools = rawPools.filter((pool) => {
     const reason = getRawPoolScreeningRejectReason(pool, s);
@@ -1202,6 +1280,7 @@ function condensePool(p) {
     helius_signers: p.helius_signers || null,
     helius_signal_at: p.helius_signal_at || null,
     volume_top_signal: Boolean(p.volume_top_signal),
+    gmgn_signal: Boolean(p.gmgn_signal),
 
     // Price action
     price: p.pool_price,

@@ -246,6 +246,7 @@ function normalizeConfigValue(key, value) {
   const booleanKeys = new Set([
     "excludeHighSupplyConcentration",
     "useVolumeTopSource",
+    "useGmgnSource",
     "useDiscordSignals",
     "useGeckoSignals",
     "useBitquerySignals",
@@ -403,6 +404,7 @@ const toolMap = {
       category: ["screening", "category"],
       minTokenFeesSol: ["screening", "minTokenFeesSol"],
       useVolumeTopSource: ["screening", "useVolumeTopSource"],
+      useGmgnSource:      ["screening", "useGmgnSource"],
       useDiscordSignals: ["screening", "useDiscordSignals"],
       discordSignalMode: ["screening", "discordSignalMode"],
       avoidPvpSymbols: ["screening", "avoidPvpSymbols"],

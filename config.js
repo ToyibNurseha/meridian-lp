@@ -79,6 +79,7 @@ export const config = {
     useDiscordSignals: u.useDiscordSignals ?? false,
     discordSignalMode: u.discordSignalMode ?? "merge", // merge | only
     useVolumeTopSource: u.useVolumeTopSource ?? true,  // inject top pools by raw volume (no category bias)
+    useGmgnSource:     u.useGmgnSource     ?? true,   // inject GMGN trending tokens → look up Meteora pools
     useGeckoSignals:   u.useGeckoSignals   ?? true,    // cross-validate with GeckoTerminal trending/new
     useBitquerySignals: u.useBitquerySignals ?? true,  // pull fresh pool creations from bitquery-signals.json
     useHeliusSignals:   u.useHeliusSignals  ?? true,   // pull smart-wallet position-opens from helius-signals.json
@@ -285,6 +286,7 @@ export function reloadScreeningThresholds() {
     if (fresh.minTokenFeesSol  != null) s.minTokenFeesSol  = fresh.minTokenFeesSol;
     if (fresh.maxTop10Pct      != null) s.maxTop10Pct      = fresh.maxTop10Pct;
     if (fresh.useVolumeTopSource !== undefined) s.useVolumeTopSource = fresh.useVolumeTopSource;
+    if (fresh.useGmgnSource     !== undefined) s.useGmgnSource     = fresh.useGmgnSource;
     if (fresh.useDiscordSignals !== undefined) s.useDiscordSignals = fresh.useDiscordSignals;
     if (fresh.discordSignalMode != null) s.discordSignalMode = fresh.discordSignalMode;
     if (fresh.excludeHighSupplyConcentration !== undefined) s.excludeHighSupplyConcentration = fresh.excludeHighSupplyConcentration;

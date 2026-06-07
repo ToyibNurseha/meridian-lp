@@ -221,6 +221,7 @@ Agent Meridian HiveMind sync is handled by `hivemind.js`. It uses built-in Agent
 | `HIVE_MIND_URL` | No | Collective intelligence server |
 | `HIVE_MIND_API_KEY` | No | Hive mind auth token |
 | `HELIUS_API_KEY` | No | Enhanced wallet balance data |
+| `GMGN_API_KEY` | No | GMGN trending token source (register at gmgn.ai/ai with Ed25519 pubkey) |
 
 ---
 
