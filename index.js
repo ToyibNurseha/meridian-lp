@@ -210,6 +210,13 @@ export async function runManagementCycle({ silent = false } = {}) {
   const screeningCooldownMs = 5 * 60 * 1000;
 
   try {
+    if (getTrackedPositions(true).length === 0) {
+      log("cron", "No open positions (cached) — skipping management, triggering screening");
+      mgmtReport = "No open positions. Triggering screening cycle.";
+      runScreeningCycle().catch((e) => log("cron_error", `Triggered screening failed: ${e.message}`));
+      return mgmtReport;
+    }
+
     if (!silent && telegramEnabled()) {
       liveMessage = await createLiveMessage("🔄 Management Cycle", "Evaluating positions...");
     }
