@@ -24,6 +24,7 @@ import {
   syncOpenPositions,
 } from "../state.js";
 import { recordPerformance } from "../lessons.js";
+import { notifyClose } from "../telegram.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { normalizeMint } from "./wallet.js";
 import { appendDecision } from "../decision-log.js";
@@ -1348,7 +1349,21 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
       request_id: relayRequestId,
     };
     if (useLocalWallet) {
-      syncOpenPositions(positions.map(p => p.position));
+      const autoClosed = syncOpenPositions(positions.map(p => p.position));
+      for (const pos of autoClosed) {
+        const deployedAt = pos.deployed_at ? new Date(pos.deployed_at).getTime() : null;
+        const minutesHeld = deployedAt ? Math.floor((Date.now() - deployedAt) / 60000) : null;
+        notifyClose({
+          pair: pos.pool_name || pos.position?.slice(0, 8),
+          pnlUsd: 0,
+          pnlPct: 0,
+          feesUsd: 0,
+          reason: "position disappeared from on-chain (auto-synced)",
+          minutesHeld,
+          strategy: pos.strategy || null,
+          amountSol: pos.amount_sol || null,
+        }).catch(() => {});
+      }
       _positionsCache = result;
       _positionsCacheAt = Date.now();
     }
