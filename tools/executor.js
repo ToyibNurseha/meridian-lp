@@ -245,6 +245,7 @@ function coerceStringArray(value, key) {
 function normalizeConfigValue(key, value) {
   const booleanKeys = new Set([
     "excludeHighSupplyConcentration",
+    "useVolumeTopSource",
     "useDiscordSignals",
     "useGeckoSignals",
     "useBitquerySignals",
@@ -401,6 +402,7 @@ const toolMap = {
       timeframe: ["screening", "timeframe"],
       category: ["screening", "category"],
       minTokenFeesSol: ["screening", "minTokenFeesSol"],
+      useVolumeTopSource: ["screening", "useVolumeTopSource"],
       useDiscordSignals: ["screening", "useDiscordSignals"],
       discordSignalMode: ["screening", "discordSignalMode"],
       avoidPvpSymbols: ["screening", "avoidPvpSymbols"],

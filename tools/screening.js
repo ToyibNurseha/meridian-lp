@@ -44,7 +44,9 @@ function scoreCandidate(pool) {
   const bitqueryBoost = pool.bitquery_signal ? 150 : 0;
   // Helius boost: smart wallet opened a position here — strongest signal. Scales with signer count.
   const heliusBoost = pool.helius_signal ? 300 + (Array.isArray(pool.helius_signers) ? pool.helius_signers.length * 50 : 0) : 0;
-  return base + geckoBoost + bitqueryBoost + heliusBoost;
+  // Volume-top boost: appeared in top pools by raw volume — high activity regardless of trending algo
+  const volumeTopBoost = pool.volume_top_signal ? 75 : 0;
+  return base + geckoBoost + bitqueryBoost + heliusBoost + volumeTopBoost;
 }
 
 function numeric(value) {
@@ -257,6 +259,26 @@ async function fetchPoolDiscoveryPage({ page_size, filters, timeframe, category 
     throw new Error(`Pool Discovery API error: ${res.status} ${res.statusText}`);
   }
 
+  return res.json();
+}
+
+async function fetchPoolDiscoveryByVolume({ page_size, timeframe, s }) {
+  const filters = [
+    "pool_type=dlmm",
+    `tvl>=${s.minTvl}`,
+    `dlmm_bin_step>=${s.minBinStep}`,
+    `dlmm_bin_step<=${s.maxBinStep}`,
+  ].filter(Boolean).join("&&");
+
+  const url = `${POOL_DISCOVERY_BASE}/pools?` +
+    `page_size=${page_size}` +
+    `&filter_by=${encodeURIComponent(filters)}` +
+    `&timeframe=${timeframe}` +
+    `&sort_by=${encodeURIComponent("volume:desc")}`;
+
+  log("screening", `API call [volume-top/${timeframe}]: tvl>=${s.minTvl} bin_step ${s.minBinStep}-${s.maxBinStep}`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Pool Discovery volume-top error: ${res.status} ${res.statusText}`);
   return res.json();
 }
 
@@ -682,6 +704,33 @@ export async function discoverPools({
       if (tagged > 0) log("screening", `Gecko cross-validation: ${tagged} pool(s) also trending/new on GeckoTerminal`);
     } catch (error) {
       log("screening", `Gecko signal fetch failed: ${error.message}`);
+    }
+  }
+
+  if (config.screening.useVolumeTopSource !== false) {
+    try {
+      const vtResult = await fetchPoolDiscoveryByVolume({ page_size: 30, timeframe: s.timeframe, s });
+      const vtPools = vtResult?.data || [];
+      if (vtPools.length > 0) {
+        const byPool = new Map(rawPools.map((p) => [p.pool_address, p]));
+        let injected = 0;
+        let tagged = 0;
+        for (const pool of vtPools) {
+          if (!pool?.pool_address) continue;
+          if (byPool.has(pool.pool_address)) {
+            byPool.get(pool.pool_address).volume_top_signal = true;
+            tagged++;
+          } else {
+            byPool.set(pool.pool_address, { ...pool, volume_top_signal: true });
+            injected++;
+          }
+        }
+        rawPools = Array.from(byPool.values());
+        if (injected > 0) log("screening", `Volume-top: injected ${injected} high-volume pool(s) not in trending/new`);
+        if (tagged > 0) log("screening", `Volume-top: ${tagged} trending pool(s) also in volume-top`);
+      }
+    } catch (error) {
+      log("screening", `Volume-top source fetch failed: ${error.message}`);
     }
   }
 
@@ -1152,6 +1201,7 @@ function condensePool(p) {
     helius_signal: Boolean(p.helius_signal),
     helius_signers: p.helius_signers || null,
     helius_signal_at: p.helius_signal_at || null,
+    volume_top_signal: Boolean(p.volume_top_signal),
 
     // Price action
     price: p.pool_price,
