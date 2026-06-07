@@ -544,22 +544,22 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   const { age_minutes, unclaimed_fees_usd } = positionData;
   const deadDeployMin = Number(mgmtConfig.deadDeployMinutes ?? 40);
   const deadDeployMinPnl = Number(mgmtConfig.deadDeployMinPnlPct ?? 0);
+  const deadFeeThreshold = 0.05; // < $0.05 unclaimed = effectively dead
   if (
     age_minutes != null &&
     age_minutes >= deadDeployMin &&
-    unclaimed_fees_usd != null && unclaimed_fees_usd <= 0 &&
-    fee_per_tvl_24h != null && fee_per_tvl_24h <= 0
+    unclaimed_fees_usd != null && unclaimed_fees_usd < deadFeeThreshold
   ) {
     if (
       !pnl_pct_suspicious &&
       currentPnlPct != null &&
       currentPnlPct < deadDeployMinPnl
     ) {
-      log("state", `Position ${position_address} dead-deploy hold: PnL ${currentPnlPct.toFixed(2)}% < ${deadDeployMinPnl}% — waiting for green (time-stop Rule 6 is backstop)`);
+      log("state", `Position ${position_address} dead-deploy hold: PnL ${currentPnlPct.toFixed(2)}% < ${deadDeployMinPnl}%, fees $${unclaimed_fees_usd?.toFixed(3) ?? 0} — waiting for green (time-stop Rule 6 is backstop)`);
     } else {
       return {
         action: "NO_FEES",
-        reason: `Dead deploy: zero fees after ${age_minutes}m, PnL ${currentPnlPct != null ? currentPnlPct.toFixed(2) + "%" : "n/a"} — closing while green`,
+        reason: `Dead deploy: fees $${unclaimed_fees_usd?.toFixed(3) ?? 0} < $${deadFeeThreshold} after ${age_minutes}m, PnL ${currentPnlPct != null ? currentPnlPct.toFixed(2) + "%" : "n/a"}`,
       };
     }
   }
