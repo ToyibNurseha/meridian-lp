@@ -1608,13 +1608,26 @@ export async function closePosition({ position_address, reason }) {
       }
 
       if (!closedConfirmed) {
+        log("close_warn", `Close unconfirmed after verification window — assuming closed (TX went through): ${closeTxHashes.join(",")}`);
+        recordClose(position_address, (reason || "agent decision") + " [unconfirmed]");
         return {
-          success: false,
-          error: "Close submit succeeded but position still appears open after verification window",
+          success: true,
+          warning: "Close TX sent but could not verify within window — position assumed closed",
           position: position_address,
           pool: poolAddress,
+          pool_name: tracked?.pool_name || null,
+          base_mint: tracked?.base_mint || livePosition?.base_mint || null,
           close_txs: closeTxHashes,
           txs: txHashes,
+          tx_count: txHashes.length,
+          pnl_usd: 0,
+          pnl_pct: 0,
+          fees_usd: 0,
+          initial_usd: tracked?.amount_usd ?? 0,
+          final_usd: 0,
+          minutes_held: tracked ? Math.floor((Date.now() - new Date(tracked.deployed_at).getTime()) / 60000) : null,
+          strategy: tracked?.strategy || null,
+          close_reason: reason || "agent decision",
         };
       }
 
@@ -1851,14 +1864,27 @@ export async function closePosition({ position_address, reason }) {
     }
 
     if (!closedConfirmed) {
+      log("close_warn", `Close unconfirmed after verification window — assuming closed (TX went through): ${closeTxHashes.join(",")}`);
+      recordClose(position_address, (reason || "agent decision") + " [unconfirmed]");
       return {
-        success: false,
-        error: "Close transactions sent but position still appears open after verification window",
+        success: true,
+        warning: "Close TX sent but could not verify within window — position assumed closed",
         position: position_address,
         pool: poolAddress,
+        pool_name: tracked?.pool_name || null,
+        base_mint: tracked?.base_mint || null,
         claim_txs: claimTxHashes,
         close_txs: closeTxHashes,
         txs: txHashes,
+        tx_count: txHashes.length,
+        pnl_usd: 0,
+        pnl_pct: 0,
+        fees_usd: 0,
+        initial_usd: tracked?.amount_usd ?? 0,
+        final_usd: 0,
+        minutes_held: tracked ? Math.floor((Date.now() - new Date(tracked.deployed_at).getTime()) / 60000) : null,
+        strategy: tracked?.strategy || null,
+        close_reason: reason || "agent decision",
       };
     }
 
