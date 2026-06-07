@@ -141,6 +141,7 @@ export const config = {
     whaleTvlMinAgeMinutes: u.whaleTvlMinAgeMinutes ?? 15,   // Rule 7: min position age before whale check fires
     deadDeployMinutes:     u.deadDeployMinutes     ?? 40,   // dead-deploy age threshold
     deadDeployMinPnlPct:   u.deadDeployMinPnlPct   ?? 0,    // require PnL >= this to close dead deploy; otherwise wait for green
+    deadFeePerSol:         u.deadFeePerSol         ?? 0.10, // dead-deploy fee threshold: $X per SOL deployed (scales with position size)
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,

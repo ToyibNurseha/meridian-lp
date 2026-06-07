@@ -544,7 +544,11 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   const { age_minutes, unclaimed_fees_usd } = positionData;
   const deadDeployMin = Number(mgmtConfig.deadDeployMinutes ?? 40);
   const deadDeployMinPnl = Number(mgmtConfig.deadDeployMinPnlPct ?? 0);
-  const deadFeeThreshold = 0.05; // total lifetime fees < $0.05 = effectively dead
+  // Threshold scales with deploy size: $X per SOL deployed (not flat USD).
+  // e.g. 0.5 SOL deploy → threshold $0.05; 5 SOL deploy → $0.50.
+  const deadFeePerSol = Number(mgmtConfig.deadFeePerSol ?? 0.10);
+  const deployedSol = pos.amount_sol || 1;
+  const deadFeeThreshold = deadFeePerSol * deployedSol;
   const claimedSoFar = pos.total_fees_claimed_usd || 0;
   const totalFeesEarned = claimedSoFar + (unclaimed_fees_usd ?? 0);
   if (
@@ -557,11 +561,11 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
       currentPnlPct != null &&
       currentPnlPct < deadDeployMinPnl
     ) {
-      log("state", `Position ${position_address} dead-deploy hold: PnL ${currentPnlPct.toFixed(2)}% < ${deadDeployMinPnl}%, total fees $${totalFeesEarned.toFixed(3)} — waiting for green (time-stop Rule 6 is backstop)`);
+      log("state", `Position ${position_address} dead-deploy hold: PnL ${currentPnlPct.toFixed(2)}% < ${deadDeployMinPnl}%, total fees $${totalFeesEarned.toFixed(3)} vs threshold $${deadFeeThreshold.toFixed(3)} (${deployedSol} SOL) — waiting for green`);
     } else {
       return {
         action: "NO_FEES",
-        reason: `Dead deploy: total fees $${totalFeesEarned.toFixed(3)} (claimed $${claimedSoFar.toFixed(3)} + pending $${(unclaimed_fees_usd ?? 0).toFixed(3)}) < $${deadFeeThreshold} after ${age_minutes}m, PnL ${currentPnlPct != null ? currentPnlPct.toFixed(2) + "%" : "n/a"}`,
+        reason: `Dead deploy: total fees $${totalFeesEarned.toFixed(3)} (claimed $${claimedSoFar.toFixed(3)} + pending $${(unclaimed_fees_usd ?? 0).toFixed(3)}) < $${deadFeeThreshold.toFixed(3)} (${deadFeePerSol}/SOL × ${deployedSol} SOL) after ${age_minutes}m, PnL ${currentPnlPct != null ? currentPnlPct.toFixed(2) + "%" : "n/a"}`,
       };
     }
   }

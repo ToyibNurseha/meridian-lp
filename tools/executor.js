@@ -472,6 +472,7 @@ const toolMap = {
       whaleTvlMinAgeMinutes: ["management", "whaleTvlMinAgeMinutes"],
       deadDeployMinutes: ["management", "deadDeployMinutes"],
       deadDeployMinPnlPct: ["management", "deadDeployMinPnlPct"],
+      deadFeePerSol: ["management", "deadFeePerSol"],
       // risk
       maxPositions: ["risk", "maxPositions"],
       maxDeployAmount: ["risk", "maxDeployAmount"],
