@@ -765,6 +765,7 @@ export async function discoverPools({
   if (config.screening.useGmgnSource !== false && process.env.GMGN_API_KEY) {
     try {
       const gmgnTokens = await fetchGmgnTrending({ interval: "1h", limit: 50 });
+      log("screening", `GMGN: fetched ${gmgnTokens.length} trending token(s)`);
       if (gmgnTokens.length > 0) {
         const byPool = new Map(rawPools.map((p) => [p.pool_address, p]));
         const byMint = new Map(rawPools.map((p) => [getPoolBaseMint(p), p]).filter(([m]) => m));
