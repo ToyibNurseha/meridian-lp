@@ -866,7 +866,7 @@ IMPORTANT:
   } finally {
     _screeningBusy = false;
     if (!silent && telegramEnabled()) {
-      const finalReport = screenReport ? stripThink(screenReport) : "⛔ No candidates passed entry filters.";
+      const finalReport = (screenReport ? stripThink(screenReport).trim() : "") || "⛔ No candidates passed entry filters.";
       if (liveMessage) await liveMessage.finalize(finalReport).catch(() => {});
       else sendMessage(`🔍 Screening Cycle\n\n${finalReport}`).catch(() => { });
     }
