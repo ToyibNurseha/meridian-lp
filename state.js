@@ -550,7 +550,13 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   // e.g. 0.5 SOL deploy → threshold $0.05; 5 SOL deploy → $0.50.
   const deadFeePerSol = Number(mgmtConfig.deadFeePerSol ?? 0.10);
   const deployedSol = pos.amount_sol || 1;
-  const deadFeeThreshold = deadFeePerSol * deployedSol;
+  // When solMode=true, fee values are in SOL not USD — use SOL-denominated threshold.
+  // deadFeeSolPerSol: minimum SOL earned per SOL deployed (default 0.001 ≈ $0.15 at $150/SOL)
+  const solMode = mgmtConfig.solMode ?? false;
+  const deadFeeSolPerSol = Number(mgmtConfig.deadFeeSolPerSol ?? 0.001);
+  const deadFeeThreshold = solMode
+    ? deadFeeSolPerSol * deployedSol
+    : deadFeePerSol * deployedSol;
   const claimedSoFar = pos.total_fees_claimed_usd || 0;
   const totalFeesEarned = claimedSoFar + (unclaimed_fees_usd ?? 0);
   if (
