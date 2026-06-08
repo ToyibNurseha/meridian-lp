@@ -866,10 +866,9 @@ IMPORTANT:
   } finally {
     _screeningBusy = false;
     if (!silent && telegramEnabled()) {
-      if (screenReport) {
-        if (liveMessage) await liveMessage.finalize(stripThink(screenReport)).catch(() => {});
-        else sendMessage(`🔍 Screening Cycle\n\n${stripThink(screenReport)}`).catch(() => { });
-      }
+      const finalReport = screenReport ? stripThink(screenReport) : "⛔ No candidates passed entry filters.";
+      if (liveMessage) await liveMessage.finalize(finalReport).catch(() => {});
+      else sendMessage(`🔍 Screening Cycle\n\n${finalReport}`).catch(() => { });
     }
   }
   return screenReport;
