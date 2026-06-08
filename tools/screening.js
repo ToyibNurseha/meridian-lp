@@ -1171,28 +1171,28 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   }
 
   if (config.indicators.enabled && eligible.length > 0) {
-    const confirmations = await Promise.all(
-      eligible.map(async (pool) => {
-        try {
-          const confirmation = await confirmIndicatorPreset({
-            mint: pool.base?.mint,
-            side: "entry",
-          });
-          return { pool: pool.pool, confirmation };
-        } catch (error) {
-          return {
-            pool: pool.pool,
-            confirmation: {
-              enabled: true,
-              confirmed: true,
-              skipped: true,
-              reason: `Indicator confirmation unavailable: ${error.message}`,
-              intervals: [],
-            },
-          };
-        }
-      }),
-    );
+    const confirmations = [];
+    for (const pool of eligible) {
+      try {
+        const confirmation = await confirmIndicatorPreset({
+          mint: pool.base?.mint,
+          side: "entry",
+        });
+        confirmations.push({ pool: pool.pool, confirmation });
+      } catch (error) {
+        confirmations.push({
+          pool: pool.pool,
+          confirmation: {
+            enabled: true,
+            confirmed: true,
+            skipped: true,
+            reason: `Indicator confirmation unavailable: ${error.message}`,
+            intervals: [],
+          },
+        });
+      }
+      await new Promise((r) => setTimeout(r, 300));
+    }
     const confirmationByPool = new Map(confirmations.map((entry) => [entry.pool, entry.confirmation]));
     const before = eligible.length;
     const confirmedEligible = eligible.filter((pool) => {
