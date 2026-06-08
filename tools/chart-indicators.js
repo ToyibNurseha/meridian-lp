@@ -159,6 +159,35 @@ function evaluatePreset(side, preset, payload) {
             reason: "Close at/above upper band with RSI overbought",
             signal: summary,
           };
+    case "evil_panda_exit":
+      // Evil Panda exit: supertrend must be bearish (broken support) THEN wait for pump signal
+      // Pump signal: RSI2 >= 90 OR price closes above BB upper (any one = exit)
+      // If supertrend still bullish: hold, we are in chop phase printing fees
+      if (side === "exit") {
+        const stBearish = isBearish || summary.supertrendBreakDown;
+        const rsiExit = rsi != null && rsi >= overbought;
+        const bbExit = close != null && upperBand != null && close >= upperBand;
+        if (!stBearish) {
+          return {
+            confirmed: false,
+            reason: `Evil Panda: supertrend bullish, holding for fees (RSI=${rsi ?? "n/a"}, BB upper=${upperBand ?? "n/a"})`,
+            signal: summary,
+          };
+        }
+        const triggered = rsiExit ? "RSI2" : bbExit ? "BB upper" : null;
+        return {
+          confirmed: rsiExit || bbExit,
+          reason: triggered
+            ? `Evil Panda exit: supertrend bearish + ${triggered} triggered (RSI=${rsi ?? "n/a"}, close=${close ?? "n/a"}, BB upper=${upperBand ?? "n/a"})`
+            : `Evil Panda exit: supertrend bearish, waiting for pump signal (RSI=${rsi ?? "n/a"}, close=${close ?? "n/a"}, BB upper=${upperBand ?? "n/a"})`,
+          signal: summary,
+        };
+      }
+      return {
+        confirmed: summary.supertrendBreakUp || (isBullish && close != null && summary.supertrendValue != null && close >= summary.supertrendValue),
+        reason: summary.supertrendBreakUp ? "Supertrend flipped bullish" : "Price is above bullish Supertrend",
+        signal: summary,
+      };
     case "fibo_reclaim":
       return side === "entry"
         ? {
