@@ -767,11 +767,25 @@ export async function discoverPools({
       const gmgnTokens = await fetchGmgnTrending({ interval: "1h", limit: 50 });
       log("screening", `GMGN: fetched ${gmgnTokens.length} trending token(s)`);
       if (gmgnTokens.length > 0) {
+        const minFish = Number(config.screening.minGmgnFishScore ?? 0);
+        const getGmgnFishScore = (t) => {
+          const val = t?.fish_percent ?? t?.global_fish_percent ?? t?.fishPercent ?? t?.global_fish ?? null;
+          return val != null ? Number(val) : null;
+        };
+        const gmgnPassesFilter = (t) => {
+          if (!minFish || minFish <= 0) return true;
+          const score = getGmgnFishScore(t);
+          return score == null || score >= minFish;
+        };
+        const passedTokens = gmgnTokens.filter(gmgnPassesFilter);
+        const fishSkipped = gmgnTokens.length - passedTokens.length;
+        if (fishSkipped > 0) log("screening", `GMGN: filtered ${fishSkipped} token(s) with global fish score < ${minFish}`);
+
         const byPool = new Map(rawPools.map((p) => [p.pool_address, p]));
         const byMint = new Map(rawPools.map((p) => [getPoolBaseMint(p), p]).filter(([m]) => m));
 
-        // Tag existing pools whose base token is trending on GMGN
-        const gmgnMints = new Set(gmgnTokens.map((t) => t?.address).filter(Boolean));
+        // Tag existing pools whose base token is trending on GMGN (only if fish score passes)
+        const gmgnMints = new Set(passedTokens.map((t) => t?.address).filter(Boolean));
         let autoTagged = 0;
         for (const pool of rawPools) {
           if (!pool.gmgn_signal && gmgnMints.has(getPoolBaseMint(pool))) {
@@ -782,7 +796,7 @@ export async function discoverPools({
         if (autoTagged > 0) log("screening", `GMGN: tagged ${autoTagged} existing pool(s) with gmgn_signal`);
 
         // For tokens not yet in our pool list, look up their best Meteora pool and inject
-        const newTokens = gmgnTokens
+        const newTokens = passedTokens
           .filter((t) => t?.address && !byMint.has(t.address))
           .slice(0, 20);
 

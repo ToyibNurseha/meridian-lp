@@ -98,6 +98,7 @@ export const config = {
     athFilterPct:       u.athFilterPct       ?? null, // e.g. -20 = only deploy if price is >= 20% below ATH
     minNetBuyers:       u.minNetBuyers       ?? -300, // skip if 1h net_buyers < this (sell-pressure dominant); null = disabled
     maxSellBuyRatio:    u.maxSellBuyRatio    ?? 3.0,  // skip if 1h sell_vol > this × buy_vol; null = disabled
+    minGmgnFishScore:   u.minGmgnFishScore   ?? 0,   // min GMGN global fish score (0 = disabled); Evil Panda: 30
   },
 
   // ─── Position Management ────────────────
@@ -315,6 +316,7 @@ export function reloadScreeningThresholds() {
     if (fresh.blockedLaunchpads !== undefined) s.blockedLaunchpads = fresh.blockedLaunchpads;
     if (fresh.minNetBuyers    !== undefined) s.minNetBuyers    = fresh.minNetBuyers;
     if (fresh.maxSellBuyRatio !== undefined) s.maxSellBuyRatio = fresh.maxSellBuyRatio;
+    if (fresh.minGmgnFishScore !== undefined) s.minGmgnFishScore = fresh.minGmgnFishScore;
     const minBinsBelow = numericConfig(fresh.minBinsBelow) ?? config.strategy.minBinsBelow;
     const maxBinsBelow = numericConfig(fresh.maxBinsBelow) ?? numericConfig(fresh.binsBelow) ?? config.strategy.maxBinsBelow;
     const defaultBinsBelow = numericConfig(fresh.defaultBinsBelow) ?? numericConfig(fresh.binsBelow) ?? config.strategy.defaultBinsBelow ?? maxBinsBelow;

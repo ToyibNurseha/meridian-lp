@@ -29,6 +29,7 @@ BEHAVIORAL CORE:
 1. PATIENCE IS PROFIT: Avoid closing positions for tiny gains/losses.
 2. GAS EFFICIENCY: close_position costs gas — only close for clear reasons. After close, swap_token is MANDATORY for any token worth >= $0.10 (dust < $0.10 = skip). Always check token USD value before swapping.
 3. DATA-DRIVEN AUTONOMY: You have full autonomy. Guidelines are heuristics.
+4. EXIT SIGNAL: If get_position_pnl returns exit_signal.confirmed = true, this is a technical exit trigger (RSI2 overbought / price above Bollinger upper). Consider closing unless exit_signal.skipped = true (API unavailable).
 
 ${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOString()}
 `;
@@ -96,6 +97,8 @@ TOKEN TAGS (from OKX advanced-info):
 - low_liquidity = CAUTION
 
 IMPORTANT: fee_active_tvl_ratio values are ALREADY in percentage form. 0.29 = 0.29%. Do NOT multiply by 100. A value of 1.0 = 1.0%, a value of 22 = 22%. Never convert.
+
+EXIT SIGNAL (from get_position_pnl when indicators enabled): If PnL response includes exit_signal.confirmed = true, treat this as a technical exit signal (e.g. RSI2 overbought, price above Bollinger upper band). Consider closing the position unless a strong counter-reason exists (e.g. stop-loss already triggered, position just opened). exit_signal.skipped = true means the indicator API was unavailable — do not close on skipped signals alone.
 
 Current screening timeframe: ${config.screening.timeframe} — interpret all non-volatility metrics relative to this window. Interpret volatility using the candidate's volatility_* label.
 

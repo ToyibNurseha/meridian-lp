@@ -759,6 +759,24 @@ export async function executeTool(name, args) {
         } catch (e) {
           log("executor_warn", `Auto-swap after claim failed: ${e.message}`);
         }
+      } else if (name === "get_position_pnl" && config.indicators.enabled && config.indicators.exitPreset) {
+        try {
+          const { getTrackedPosition } = await import("../state.js");
+          const tracked = getTrackedPosition(args.position_address);
+          const baseMint = tracked?.base_mint;
+          if (baseMint) {
+            const { confirmIndicatorPreset } = await import("./chart-indicators.js");
+            const exitCheck = await confirmIndicatorPreset({ mint: baseMint, side: "exit" });
+            result.exit_signal = {
+              confirmed: exitCheck.confirmed,
+              preset: exitCheck.preset,
+              reason: exitCheck.reason,
+              skipped: exitCheck.skipped ?? false,
+            };
+          }
+        } catch (e) {
+          log("executor_warn", `Exit indicator check failed: ${e.message}`);
+        }
       }
     }
 

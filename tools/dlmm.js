@@ -705,6 +705,7 @@ export async function deployPosition({
           active_bin: activeBin.binId,
           initial_value_usd,
           signal_snapshot: signalSnapshot,
+          base_mint: baseMint,
         });
       }
 
@@ -844,6 +845,7 @@ export async function deployPosition({
       active_bin: activeBin.binId,
       initial_value_usd,
       signal_snapshot: signalSnapshot,
+      base_mint: baseMint,
     });
 
     appendDecision({

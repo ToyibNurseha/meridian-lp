@@ -69,6 +69,7 @@ export function trackPosition({
   initial_value_usd,
   signal_snapshot = null,
   entry_tvl = null,
+  base_mint = null,
 }) {
   const state = load();
   state.positions[position] = {
@@ -79,6 +80,7 @@ export function trackPosition({
     bin_range,
     amount_sol,
     amount_x,
+    base_mint,
     active_bin_at_deploy: active_bin,
     bin_step,
     volatility,
