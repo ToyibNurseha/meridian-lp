@@ -787,6 +787,24 @@ function condensePool(p) {
     fee_change_pct: fix(p.fee_change_pct, 1),
     swap_count: p.swap_count,
     unique_traders: p.unique_traders,
+
+    // Strategy recommendation based on price action
+    // LLM uses this as a strong hint but can override with reasoning.
+    recommended_strategy: (() => {
+      const priceChange = Number(p.pool_price_change_pct ?? 0);
+      const volumeChange = Number(p.volume_change_pct ?? 0);
+      const threshold = Number(config.screening.pumpSpotThresholdPct ?? 15);
+      if (priceChange > threshold && volumeChange > 0) return "spot";
+      return "bid_ask";
+    })(),
+    strategy_reason: (() => {
+      const priceChange = Number(p.pool_price_change_pct ?? 0);
+      const volumeChange = Number(p.volume_change_pct ?? 0);
+      const threshold = Number(config.screening.pumpSpotThresholdPct ?? 15);
+      if (priceChange > threshold && volumeChange > 0)
+        return `pump +${priceChange.toFixed(1)}% + volume surge — place range below, wait for exit wave`;
+      return "stable/reversal — bid_ask catches fees both directions";
+    })(),
   };
 }
 

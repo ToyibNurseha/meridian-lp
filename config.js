@@ -97,6 +97,9 @@ export const config = {
     blockedLaunchpads:  u.blockedLaunchpads  ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
     minTokenAgeHours:   u.minTokenAgeHours   ?? null, // null = no minimum
     maxTokenAgeHours:   u.maxTokenAgeHours   ?? null, // null = no maximum
+    // Dynamic strategy selection
+    pumpSpotThresholdPct: u.pumpSpotThresholdPct ?? 15,  // price_change_pct above this → recommend spot
+    pumpSpotAthDumpPct:   u.pumpSpotAthDumpPct   ?? 20,  // % below ATH → recommend spot (dump recovery entry)
   },
 
   // ─── Position Management ────────────────

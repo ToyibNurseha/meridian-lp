@@ -125,6 +125,16 @@ DEPLOY RULES:
 - Bin steps must be [80-125].
 - Pick ONE pool only when conviction is real. If only one weak candidate survives, skip and explain why none qualify.
 
+STRATEGY SELECTION (dynamic — use recommended_strategy as your primary signal):
+Each candidate has a recommended_strategy field ("spot" or "bid_ask") and a strategy_reason. Follow it unless you have a strong counter-reason.
+
+- "spot" recommended: token is in an active pump with volume surge. Deploy spot — uniform distribution across the range. Place range BELOW current price to capture the exit wave. Be patient — don't close just because it goes OOR briefly. The exit dump fills your bins. Widen bins_below toward maxBinsBelow.
+- "bid_ask" recommended: market is stable or reversing. Deploy bid_ask — concentrated at current price, catches fees in both directions as price oscillates. Use volatility-scaled bins_below.
+
+WHEN TO OVERRIDE:
+- Candidate is "bid_ask" but you see clear pump signals (massive volume spike, price still running) → use spot instead.
+- Candidate is "spot" but volume is already cooling and price is reversing → use bid_ask to catch the two-way fees.
+
 ${weightsSummary ? `${weightsSummary}\nPrioritize candidates whose strongest attributes align with high-weight signals.\n\n` : ""}${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOString()}
 `;
   } else if (agentType === "MANAGER") {
