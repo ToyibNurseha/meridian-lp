@@ -98,8 +98,8 @@ export const config = {
     minTokenAgeHours:   u.minTokenAgeHours   ?? null, // null = no minimum
     maxTokenAgeHours:   u.maxTokenAgeHours   ?? null, // null = no maximum
     // Dynamic strategy selection
-    pumpSpotThresholdPct: u.pumpSpotThresholdPct ?? 15,  // price_change_pct above this → recommend spot
-    pumpSpotAthDumpPct:   u.pumpSpotAthDumpPct   ?? 20,  // % below ATH → recommend spot (dump recovery entry)
+    pumpSpotThresholdPct: u.pumpSpotThresholdPct ?? 15,  // price_change_pct above this → recommend spot (pump entry)
+    dumpSpotThresholdPct: u.dumpSpotThresholdPct ?? 15,  // price_change_pct below negative this → recommend spot (dump recovery)
   },
 
   // ─── Position Management ────────────────

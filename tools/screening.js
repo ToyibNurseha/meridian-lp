@@ -793,16 +793,23 @@ function condensePool(p) {
     recommended_strategy: (() => {
       const priceChange = Number(p.pool_price_change_pct ?? 0);
       const volumeChange = Number(p.volume_change_pct ?? 0);
-      const threshold = Number(config.screening.pumpSpotThresholdPct ?? 15);
-      if (priceChange > threshold && volumeChange > 0) return "spot";
+      const volume = Number(p.volume ?? 0);
+      const pumpThreshold = Number(config.screening.pumpSpotThresholdPct ?? 15);
+      const dumpThreshold = Number(config.screening.dumpSpotThresholdPct ?? 15);
+      if (priceChange > pumpThreshold && volumeChange > 0) return "spot";
+      if (priceChange < -dumpThreshold && volume > 0) return "spot";
       return "bid_ask";
     })(),
     strategy_reason: (() => {
       const priceChange = Number(p.pool_price_change_pct ?? 0);
       const volumeChange = Number(p.volume_change_pct ?? 0);
-      const threshold = Number(config.screening.pumpSpotThresholdPct ?? 15);
-      if (priceChange > threshold && volumeChange > 0)
+      const volume = Number(p.volume ?? 0);
+      const pumpThreshold = Number(config.screening.pumpSpotThresholdPct ?? 15);
+      const dumpThreshold = Number(config.screening.dumpSpotThresholdPct ?? 15);
+      if (priceChange > pumpThreshold && volumeChange > 0)
         return `pump +${priceChange.toFixed(1)}% + volume surge — place range below, wait for exit wave`;
+      if (priceChange < -dumpThreshold && volume > 0)
+        return `dump ${priceChange.toFixed(1)}% + volume still active — spot at dip, wait for recovery bounce`;
       return "stable/reversal — bid_ask catches fees both directions";
     })(),
   };
