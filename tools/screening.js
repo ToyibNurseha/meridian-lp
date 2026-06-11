@@ -425,8 +425,9 @@ export async function discoverPools({
     }
     const returned = result.value?.data?.length ?? 0;
     const total = result.value?.total ?? 0;
-    log("screening", `Category [${categories[i]}]: ${returned} returned (API total: ${total})`);
-    for (const pool of (result.value?.data || [])) {
+    const pools = result.value?.data || [];
+    log("screening", `Category [${categories[i]}]: ${returned} returned (API total: ${total}) — ${pools.map(p => p.name || p.pool_address?.slice(0, 8)).join(", ")}`);
+    for (const pool of pools) {
       const addr = pool?.pool_address;
       if (addr && !seenAddresses.has(addr)) {
         seenAddresses.add(addr);
