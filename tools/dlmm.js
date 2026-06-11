@@ -1166,6 +1166,11 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
       try {
         if (!silent) log("positions", `Computing PnL from RPC (${config.pnl.rpcUrl})...`);
         const rpcResult = await computePositions(walletAddress);
+        if (!silent && rpcResult?.positions?.length) {
+          for (const p of rpcResult.positions) {
+            log("positions", `  ${p.pair ?? p.position?.slice(0, 8)} | pnl=${p.pnl_pct != null ? p.pnl_pct.toFixed(2) + "%" : "?"} | fees=$${p.unclaimed_fees_usd ?? "?"} | val=${p.total_value_usd != null ? p.total_value_usd.toFixed(4) + " SOL" : "?"} | ${p.in_range ? "in-range" : "OOR"}`);
+          }
+        }
         if (useLocalWallet) {
           syncOpenPositions(rpcResult.positions.map((p) => p.position));
           _positionsCache = rpcResult;
