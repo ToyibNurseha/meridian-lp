@@ -106,6 +106,15 @@ function stripThink(text) {
   return text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 }
 
+function extractReport(text) {
+  if (!text) return "";
+  const visible = stripThink(text);
+  if (visible) return visible;
+  // Model put entire response in <think> — surface the reasoning as-is
+  const m = text.match(/<think>([\s\S]*?)<\/think>/i);
+  return m ? `[reasoning only]\n${m[1].trim()}` : text;
+}
+
 function sanitizeUntrustedPromptText(text, maxLen = 500) {
   if (!text) return null;
   const cleaned = String(text)
@@ -369,7 +378,7 @@ After executing, write a brief one-line result per position.
     _managementBusy = false;
     if (!silent && telegramEnabled()) {
       if (mgmtReport) {
-        const finalMgmtReport = stripThink(mgmtReport) || "Management cycle complete — no visible output from model.";
+        const finalMgmtReport = extractReport(mgmtReport);
         if (liveMessage) await liveMessage.finalize(finalMgmtReport).catch(() => {});
         else sendMessage(`🔄 Management Cycle\n\n${finalMgmtReport}`).catch(() => { });
       }
@@ -696,7 +705,7 @@ IMPORTANT:
     _screeningBusy = false;
     if (!silent && telegramEnabled()) {
       if (screenReport) {
-        const finalReport = stripThink(screenReport) || "⛔ NO DEPLOY\n\nCycle complete — no visible output from model.";
+        const finalReport = extractReport(screenReport);
         if (liveMessage) await liveMessage.finalize(finalReport).catch(() => {});
         else sendMessage(`🔍 Screening Cycle\n\n${finalReport}`).catch(() => { });
       }
