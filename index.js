@@ -110,9 +110,10 @@ function extractReport(text) {
   if (!text) return "";
   const visible = stripThink(text);
   if (visible) return visible;
-  // Model put entire response in <think> — surface the reasoning as-is
+  // Model put entire response in <think> — surface truncated reasoning as fallback
   const m = text.match(/<think>([\s\S]*?)<\/think>/i);
-  return m ? `[reasoning only]\n${m[1].trim()}` : text;
+  const reasoning = m ? m[1].trim().slice(0, 800) : text.slice(0, 800);
+  return `⛔ NO DEPLOY\n\n[model reasoned internally — no visible output]\n${reasoning}${reasoning.length >= 800 ? "…" : ""}`;
 }
 
 function sanitizeUntrustedPromptText(text, maxLen = 500) {

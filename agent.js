@@ -302,8 +302,10 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
         if (mustUseRealTool && !sawToolCall) {
           // Accept "NO DEPLOY" decisions — screener can legitimately decide no candidate qualifies.
           // Also accept explicit "decline"/"skip" decisions in MANAGER/general contexts.
+          // Only match on VISIBLE content (outside <think> tags) — avoid accepting lazy think-only responses.
           const NO_ACTION_PATTERN = /\bNO\s*DEPLOY\b|\bNO[-_\s]*ACTION\b|\bSKIP\b|\bDECLINE\b/i;
-          if (NO_ACTION_PATTERN.test(msg.content)) {
+          const visibleContent = msg.content.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+          if (NO_ACTION_PATTERN.test(visibleContent)) {
             log("agent", `No-tool final answer accepted (matched NO DEPLOY / NO ACTION pattern)`);
             return { content: msg.content, userMessage: goal };
           }
