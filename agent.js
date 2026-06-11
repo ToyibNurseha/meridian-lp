@@ -311,8 +311,8 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
           }
           noToolRetryCount += 1;
           messages.pop();
-          log("agent", `Rejected no-tool final answer (${noToolRetryCount}/2) for tool-required request`);
-          if (noToolRetryCount >= 2) {
+          log("agent", `Rejected no-tool final answer (${noToolRetryCount}/3) for tool-required request`);
+          if (noToolRetryCount >= 3) {
             return {
               content: "I couldn't complete that reliably because no tool call was made. Please retry after checking the logs.",
               userMessage: goal,
@@ -321,8 +321,8 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
           messages.push({
             role: providerMode === "system" ? "system" : "user",
             content: providerMode === "system"
-              ? "You have not used any tool yet. This request requires real tool execution or live tool-backed data. Do not answer from memory or inference. Call the appropriate tool first, then report only the real result. (If no candidate qualifies, reply with exactly 'NO DEPLOY' and explain briefly.)"
-              : "[SYSTEM REMINDER]\nYou have not used any tool yet. This request requires real tool execution or live tool-backed data. Do not answer from memory or inference. Call the appropriate tool first, then report only the real result. (If no candidate qualifies, reply with exactly 'NO DEPLOY' and explain briefly.)",
+              ? "You have not called any tool yet. Either call deploy_position now, or write your NO DEPLOY decision as plain visible text (outside any <think> tags) in this exact format:\n⛔ NO DEPLOY\n\nBEST LOOKING CANDIDATE\n<name or none>\n\nWHY SKIPPED\n<reason>\n\nREJECTED\n<list>"
+              : "[SYSTEM REMINDER]\nYou have not called any tool yet. Either call deploy_position now, or write your NO DEPLOY decision as plain visible text (outside any <think> tags) in this exact format:\n⛔ NO DEPLOY\n\nBEST LOOKING CANDIDATE\n<name or none>\n\nWHY SKIPPED\n<reason>\n\nREJECTED\n<list>",
           });
           continue;
         }
