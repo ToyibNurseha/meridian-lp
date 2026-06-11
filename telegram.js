@@ -1,10 +1,8 @@
 import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import { log } from "./logger.js";
+import { repoPath } from "./repo-root.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
+const USER_CONFIG_PATH = repoPath("user-config.json");
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || null;
 const BASE  = TOKEN ? `https://api.telegram.org/bot${TOKEN}` : null;
@@ -15,54 +13,38 @@ const ALLOWED_USER_IDS = new Set(
     .filter(Boolean)
 );
 
-let chatId   = process.env.TELEGRAM_CHAT_ID || null;
+let chatId = null;
 let _offset  = 0;
 let _polling = false;
 let _liveMessageDepth = 0;
 let _warnedMissingChatId = false;
 let _warnedMissingAllowedUsers = false;
 
-// Track last edit payload per message_id to skip identical edits that would yield
-// Telegram "message is not modified" 400 errors.
-const _lastEditSnapshot = new Map();
-const MAX_EDIT_SNAPSHOTS = 200;
-
-function snapshotKey(messageId) {
-  return String(messageId);
-}
-
-function makeEditFingerprint(body) {
-  try {
-    return JSON.stringify({
-      text: body.text ?? "",
-      reply_markup: body.reply_markup ?? null,
-      parse_mode: body.parse_mode ?? null,
-    });
-  } catch {
-    return null;
-  }
-}
-
-function rememberEditFingerprint(messageId, fp) {
-  if (!fp) return;
-  const key = snapshotKey(messageId);
-  _lastEditSnapshot.set(key, fp);
-  if (_lastEditSnapshot.size > MAX_EDIT_SNAPSHOTS) {
-    const firstKey = _lastEditSnapshot.keys().next().value;
-    _lastEditSnapshot.delete(firstKey);
-  }
+function nonEmptyChatId(value) {
+  if (value == null) return null;
+  const trimmed = String(value).trim();
+  return trimmed || null;
 }
 
 // ─── chatId persistence ──────────────────────────────────────────
-function loadChatId() {
+function resolveChatId() {
+  const fromEnv = nonEmptyChatId(process.env.TELEGRAM_CHAT_ID);
+  let fromConfig = null;
   try {
     if (fs.existsSync(USER_CONFIG_PATH)) {
       const cfg = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8"));
-      if (cfg.telegramChatId) chatId = cfg.telegramChatId;
+      fromConfig = nonEmptyChatId(cfg.telegramChatId);
     }
   } catch (error) {
     log("telegram_warn", `Invalid user-config.json; chatId not loaded: ${error.message}`);
   }
+  // user-config wins when set; otherwise fall back to .env
+  const resolved = fromConfig || fromEnv || null;
+  return resolved != null ? String(resolved) : null;
+}
+
+function loadChatId() {
+  chatId = resolveChatId();
 }
 
 function saveChatId(id) {
@@ -92,7 +74,7 @@ function isAuthorizedIncomingMessage(msg) {
     return false;
   }
 
-  if (incomingChatId !== chatId) return false;
+  if (incomingChatId !== String(chatId)) return false;
 
   if (chatType !== "private" && ALLOWED_USER_IDS.size === 0) {
     if (!_warnedMissingAllowedUsers) {
@@ -124,8 +106,9 @@ async function postTelegram(method, body) {
     });
     if (!res.ok) {
       const err = await res.text();
-      // Suppress harmless "message is not modified" 400 from editMessageText.
-      if (!(method === "editMessageText" && res.status === 400 && err.includes("message is not modified"))) {
+      if (res.status === 401) {
+        log("telegram_error", `${method} 401 Unauthorized — check TELEGRAM_BOT_TOKEN in .env (invalid, revoked, or encrypted without .envrypt key)`);
+      } else {
         log("telegram_error", `${method} ${res.status}: ${err.slice(0, 200)}`);
       }
       return null;
@@ -147,7 +130,11 @@ async function postTelegramRaw(method, body) {
     });
     if (!res.ok) {
       const err = await res.text();
-      log("telegram_error", `${method} ${res.status}: ${err.slice(0, 200)}`);
+      if (res.status === 401) {
+        log("telegram_error", `${method} 401 Unauthorized — check TELEGRAM_BOT_TOKEN in .env (invalid, revoked, or encrypted without .envrypt key)`);
+      } else {
+        log("telegram_error", `${method} ${res.status}: ${err.slice(0, 200)}`);
+      }
       return null;
     }
     return await res.json();
@@ -177,29 +164,19 @@ export async function sendHTML(html) {
 
 export async function editMessage(text, messageId) {
   if (!TOKEN || !chatId || !messageId) return null;
-  const body = {
+  return postTelegram("editMessageText", {
     message_id: messageId,
     text: String(text).slice(0, 4096),
-  };
-  const fp = makeEditFingerprint(body);
-  if (fp && _lastEditSnapshot.get(snapshotKey(messageId)) === fp) return null;
-  const res = await postTelegram("editMessageText", body);
-  if (res?.ok !== false) rememberEditFingerprint(messageId, fp);
-  return res;
+  });
 }
 
 export async function editMessageWithButtons(text, messageId, inlineKeyboard) {
   if (!TOKEN || !chatId || !messageId) return null;
-  const body = {
+  return postTelegram("editMessageText", {
     message_id: messageId,
     text: String(text).slice(0, 4096),
     reply_markup: { inline_keyboard: inlineKeyboard },
-  };
-  const fp = makeEditFingerprint(body);
-  if (fp && _lastEditSnapshot.get(snapshotKey(messageId)) === fp) return null;
-  const res = await postTelegram("editMessageText", body);
-  if (res?.ok !== false) rememberEditFingerprint(messageId, fp);
-  return res;
+  });
 }
 
 export async function answerCallbackQuery(callbackQueryId, text = "") {
@@ -469,6 +446,10 @@ async function registerCommands() {
 
 export function startPolling(onMessage) {
   if (!TOKEN) return;
+  loadChatId();
+  if (!chatId) {
+    log("telegram_warn", "TELEGRAM_CHAT_ID not set in .env or user-config.telegramChatId — outbound notifications and inbound control disabled until configured.");
+  }
   _polling = true;
   poll(onMessage); // fire-and-forget
   registerCommands();
@@ -480,7 +461,8 @@ export function stopPolling() {
 }
 
 // ─── Notification helpers ────────────────────────────────────────
-export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, rangeCoverage, binStep, baseFee, strategy = null }) {
+export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, rangeCoverage, binStep, baseFee }) {
+  if (hasActiveLiveMessage()) return;
   const priceStr = priceRange
     ? `Price range: ${priceRange.min < 0.0001 ? priceRange.min.toExponential(3) : priceRange.min.toFixed(6)} – ${priceRange.max < 0.0001 ? priceRange.max.toExponential(3) : priceRange.max.toFixed(6)}\n`
     : "";
@@ -490,11 +472,9 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
   const poolStr = (binStep || baseFee)
     ? `Bin step: ${binStep ?? "?"}  |  Base fee: ${baseFee != null ? baseFee + "%" : "?"}\n`
     : "";
-  const strategyStr = strategy ? `Strategy: ${strategy}\n` : "";
   await sendHTML(
     `✅ <b>Deployed</b> ${pair}\n` +
     `Amount: ${amountSol} SOL\n` +
-    strategyStr +
     priceStr +
     coverageStr +
     poolStr +
@@ -503,52 +483,13 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
   );
 }
 
-// Estimated all-in gas (lamports → SOL) per close cycle: claim + remove liquidity +
-// close + auto-swap, including Jito tip/priority. Tuned against May 2026 sample
-// where wallet SOL delta - realized USD PnL ≈ -$3.40 over 21 closes.
-const GAS_SOL_PER_TX = 0.0005;
-const SOL_USD_FALLBACK = 85;
-
-export async function notifyClose({ pair, pnlUsd, pnlPct, feesUsd = 0, initialUsd = 0, finalUsd = 0, txCount = 0, reason = null, minutesHeld = null, strategy = null, amountSol = null }) {
+export async function notifyClose({ pair, pnlUsd, pnlPct }) {
+  if (hasActiveLiveMessage()) return;
   const sign = pnlUsd >= 0 ? "+" : "";
-  const ilUsd = (finalUsd ?? 0) - (initialUsd ?? 0); // negative = IL on principal
-  const gasSol = (txCount || 3) * GAS_SOL_PER_TX;
-  const gasUsd = gasSol * SOL_USD_FALLBACK;
-  const netUsd = (pnlUsd ?? 0) - gasUsd;
-  const netSign = netUsd >= 0 ? "+" : "";
-
-  const solPrice = (amountSol && initialUsd) ? initialUsd / amountSol : SOL_USD_FALLBACK;
-  const finalSol = (finalUsd != null && solPrice) ? finalUsd / solPrice : null;
-
-  const lines = [
-    `🔒 <b>Closed</b> ${pair}`,
-    `PnL: ${sign}$${(pnlUsd ?? 0).toFixed(2)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)`,
-  ];
-  if (amountSol != null && initialUsd) {
-    lines.push(`💰 Deposited: ◎${Number(amountSol).toFixed(4)} ($${(initialUsd ?? 0).toFixed(2)})`);
-  } else if (amountSol != null) {
-    lines.push(`💰 Deposited: ◎${Number(amountSol).toFixed(4)}`);
-  }
-  if (finalSol != null && finalUsd) {
-    lines.push(`💸 Withdrawn: ◎${finalSol.toFixed(4)} ($${(finalUsd ?? 0).toFixed(2)})`);
-  }
-  if (feesUsd || initialUsd) {
-    lines.push(`Fees: $${(feesUsd ?? 0).toFixed(2)} | IL: ${ilUsd >= 0 ? "+" : ""}$${ilUsd.toFixed(2)}`);
-  }
-  if (minutesHeld != null) {
-    const m = Math.max(0, Math.round(Number(minutesHeld)));
-    const hold = m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
-    lines.push(`⏱️ Hold: ${hold}`);
-  }
-  if (strategy) {
-    lines.push(`📐 Strategy: ${strategy}`);
-  }
-  if (reason) {
-    const trimmed = String(reason).replace(/[\r\n]+/g, " ").slice(0, 200);
-    lines.push(`📝 Reason: ${trimmed}`);
-  }
-
-  await sendHTML(lines.join("\n"));
+  await sendHTML(
+    `🔒 <b>Closed</b> ${pair}\n` +
+    `PnL: ${sign}$${(pnlUsd ?? 0).toFixed(2)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)`
+  );
 }
 
 export async function notifySwap({ inputSymbol, outputSymbol, amountIn, amountOut, tx }) {

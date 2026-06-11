@@ -14,8 +14,7 @@ import { studyTopLPers } from "./study.js";
 import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../lessons.js";
 import { setPositionInstruction } from "../state.js";
 
-import { getPoolMemory, addPoolNote, markPoolSafetyBlocked, countRecentVolBlocks } from "../pool-memory.js";
-import { recordSkip } from "../skip-tracker.js";
+import { getPoolMemory, addPoolNote } from "../pool-memory.js";
 import { addStrategy, listStrategies, getStrategy, setActiveStrategy, removeStrategy } from "../strategy-library.js";
 import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../token-blacklist.js";
 import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist.js";
@@ -24,17 +23,15 @@ import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
 import { config, reloadScreeningThresholds, MIN_SAFE_BINS_BELOW } from "../config.js";
 import { getRecentDecisions } from "../decision-log.js";
 import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import { execSync, spawn } from "child_process";
+import { REPO_ROOT, repoPath } from "../repo-root.js";
+import { normalizeTimeframe, scaleScreeningToTimeframe } from "../screening-scales.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const USER_CONFIG_PATH = path.join(__dirname, "../user-config.json");
+const USER_CONFIG_PATH = repoPath("user-config.json");
 const POOL_DISCOVERY_BASE = "https://pool-discovery-api.datapi.meteora.ag";
 const MIN_VOLATILITY_TIMEFRAME = "30m";
 const TIMEFRAME_MINUTES = {
   "5m": 5,
-  "15m": 15,
   "30m": 30,
   "1h": 60,
   "2h": 120,
@@ -118,51 +115,16 @@ async function validateDeployPoolThresholds(args) {
   }
 
   const feeActiveTvlRatio = poolDetailFeeActiveTvlRatio(detail);
-  const volumeWindow = numberOrNull(detail?.volume);
+  const minFeeActiveTvlRatio = numberOrNull(config.screening.minFeeActiveTvlRatio);
   if (
-    (feeActiveTvlRatio == null || feeActiveTvlRatio === 0) &&
-    (volumeWindow == null || volumeWindow === 0)
+    minFeeActiveTvlRatio != null &&
+    minFeeActiveTvlRatio > 0 &&
+    (feeActiveTvlRatio == null || feeActiveTvlRatio < minFeeActiveTvlRatio)
   ) {
-    // Short window (e.g. 5m) routinely shows zero — re-check 1h before rejecting
-    let longDetail = null;
-    try {
-      longDetail = await fetchFreshPoolDetail(args.pool_address, "1h");
-    } catch (error) {
-      log("safety", `Long-window recheck failed for ${args.pool_address}: ${error.message}`);
-    }
-    const longFee = poolDetailFeeActiveTvlRatio(longDetail);
-    const longVolume = numberOrNull(longDetail?.volume);
-    const longDead =
-      (longFee == null || longFee === 0) &&
-      (longVolume == null || longVolume === 0);
-    if (longDead) {
-      return {
-        pass: false,
-        reason: `Pool has zero fees AND zero volume across both 5m and 1h windows — pool truly dead. Skipping deploy.`,
-      };
-    }
-    log("safety", `Pool ${args.pool_address} passed long-window recheck (1h fee/aTVL=${longFee}, vol=${longVolume}) — allowing deploy despite zero short-window`);
-  }
-
-  // Config minFeeActiveTvlRatio is in percent (e.g. 0.5 = 0.5%); raw API value is decimal (0.005 = 0.5%). Convert.
-  const minFeeRatio = Number(config.screening.minFeeActiveTvlRatio) / 100;
-  if (Number.isFinite(minFeeRatio) && minFeeRatio > 0) {
-    if (feeActiveTvlRatio == null || feeActiveTvlRatio < minFeeRatio) {
-      let recheckDetail = null;
-      try {
-        recheckDetail = await fetchFreshPoolDetail(args.pool_address, "30m");
-      } catch (error) {
-        log("safety", `30m fee/TVL recheck failed for ${args.pool_address}: ${error.message}`);
-      }
-      const recheckRatio = poolDetailFeeActiveTvlRatio(recheckDetail);
-      if (recheckRatio == null || recheckRatio < minFeeRatio) {
-        return {
-          pass: false,
-          reason: `Pool fee/active-TVL ${feeActiveTvlRatio ?? "unknown"} (5m) / ${recheckRatio ?? "unknown"} (30m) below minFeeActiveTvlRatio ${minFeeRatio}. Smart wallets do not override this floor.`,
-        };
-      }
-      log("safety", `Pool ${args.pool_address} passed 30m fee/TVL recheck (${recheckRatio}) despite low 5m (${feeActiveTvlRatio ?? "unknown"}) — allowing deploy`);
-    }
+    return {
+      pass: false,
+      reason: `Pool fee/active-TVL ${feeActiveTvlRatio ?? "unknown"}% is below configured minFeeActiveTvlRatio ${minFeeActiveTvlRatio}%.`,
+    };
   }
 
   const volatilityTimeframe = getVolatilityTimeframe(config.screening.timeframe || "5m");
@@ -185,13 +147,6 @@ async function validateDeployPoolThresholds(args) {
       reason: `Pool ${volatilityTimeframe} volatility ${volatility ?? "unknown"} is unusable. Refusing deploy.`,
     };
   }
-  const maxVolatility = Number(config.screening.maxVolatility);
-  if (Number.isFinite(maxVolatility) && maxVolatility > 0 && volatility > maxVolatility) {
-    return {
-      pass: false,
-      reason: `Pool volatility ${volatility} exceeds maxVolatility ${maxVolatility}. Token is in extreme pump phase — refusing deploy.`,
-    };
-  }
 
   const actualBinStep = poolDetailBinStep(detail);
   const minStep = numberOrNull(config.screening.minBinStep);
@@ -209,7 +164,15 @@ async function validateDeployPoolThresholds(args) {
     };
   }
 
-  return { pass: true };
+  const baseMint = detail?.token_x?.address || detail?.base_token_address || null;
+  const entryMarketData = {
+    entry_mcap: numberOrNull(detail?.token_x?.market_cap ?? detail?.base_token_market_cap),
+    entry_tvl: tvl,
+    entry_volume: numberOrNull(detail?.volume),
+    entry_holders: numberOrNull(detail?.base_token_holders ?? detail?.token_x?.holders),
+  };
+
+  return { pass: true, entryMarketData };
 }
 
 // Registered by index.js so update_config can restart cron jobs when intervals change
@@ -245,12 +208,7 @@ function coerceStringArray(value, key) {
 function normalizeConfigValue(key, value) {
   const booleanKeys = new Set([
     "excludeHighSupplyConcentration",
-    "useVolumeTopSource",
-    "useGmgnSource",
     "useDiscordSignals",
-    "useGeckoSignals",
-    "useBitquerySignals",
-    "useHeliusSignals",
     "avoidPvpSymbols",
     "blockPvpSymbols",
     "autoSwapAfterClaim",
@@ -258,11 +216,8 @@ function normalizeConfigValue(key, value) {
     "solMode",
     "darwinEnabled",
     "lpAgentRelayEnabled",
-    "chartIndicatorsEnabled",
-    "requireAllIntervals",
-    "requireSmartWalletSignal",
   ]);
-  const arrayKeys = new Set(["allowedLaunchpads", "blockedLaunchpads", "indicatorIntervals"]);
+  const arrayKeys = new Set(["allowedLaunchpads", "blockedLaunchpads"]);
   const stringKeys = new Set([
     "timeframe",
     "category",
@@ -277,8 +232,10 @@ function normalizeConfigValue(key, value) {
     "hiveMindPullMode",
     "publicApiKey",
     "agentMeridianApiUrl",
-    "indicatorEntryPreset",
-    "indicatorExitPreset",
+    "pnlSource",
+    "pnlRpcUrl",
+    "gmgnFeeSource",
+    "gmgnApiKey",
   ]);
   if (value === null) return null;
   if (booleanKeys.has(key)) return coerceBoolean(value, key);
@@ -318,7 +275,7 @@ const toolMap = {
   },
   self_update: async () => {
     try {
-      const result = execSync("git pull", { cwd: process.cwd(), encoding: "utf8" }).trim();
+      const result = execSync("git pull", { cwd: REPO_ROOT, encoding: "utf8" }).trim();
       if (result.includes("Already up to date")) {
         return { success: true, updated: false, message: "Already up to date — no restart needed." };
       }
@@ -328,7 +285,7 @@ const toolMap = {
           const child = spawn(process.execPath, process.argv.slice(1), {
             detached: true,
             stdio: "inherit",
-            cwd: process.cwd(),
+            cwd: REPO_ROOT,
           });
           child.unref();
         }
@@ -358,8 +315,7 @@ const toolMap = {
   unblock_deployer: unblockDev,
   list_blocked_deployers: listBlockedDevs,
   add_lesson: ({ rule, tags, pinned, role }) => {
-    const normalizedTags = Array.isArray(tags) ? tags : typeof tags === "string" && tags ? tags.split(/[,\s]+/).map(t => t.trim()).filter(Boolean) : [];
-    addLesson(rule, normalizedTags, { pinned: !!pinned, role: role || null });
+    addLesson(rule, tags || [], { pinned: !!pinned, role: role || null });
     return { saved: true, rule, pinned: !!pinned, role: role || "all" };
   },
   pin_lesson:   ({ id }) => pinLesson(id),
@@ -403,42 +359,22 @@ const toolMap = {
       timeframe: ["screening", "timeframe"],
       category: ["screening", "category"],
       minTokenFeesSol: ["screening", "minTokenFeesSol"],
-      useVolumeTopSource: ["screening", "useVolumeTopSource"],
-      useGmgnSource:      ["screening", "useGmgnSource"],
       useDiscordSignals: ["screening", "useDiscordSignals"],
       discordSignalMode: ["screening", "discordSignalMode"],
       avoidPvpSymbols: ["screening", "avoidPvpSymbols"],
       blockPvpSymbols: ["screening", "blockPvpSymbols"],
-      maxBundlePct:     ["screening", "maxBundlePct"],
       maxBotHoldersPct: ["screening", "maxBotHoldersPct"],
       maxTop10Pct: ["screening", "maxTop10Pct"],
       allowedLaunchpads: ["screening", "allowedLaunchpads"],
       blockedLaunchpads: ["screening", "blockedLaunchpads"],
       minTokenAgeHours: ["screening", "minTokenAgeHours"],
       maxTokenAgeHours: ["screening", "maxTokenAgeHours"],
-      athFilterPct:     ["screening", "athFilterPct"],
-      maxVolatility:    ["screening", "maxVolatility"],
-      maxRecentPumpPct: ["screening", "maxRecentPumpPct"],
-      minNetBuyers:     ["screening", "minNetBuyers"],
-      maxSellBuyRatio:  ["screening", "maxSellBuyRatio"],
-      staticRejectCooldownHours: ["screening", "staticRejectCooldownHours"],
-      useGeckoSignals:  ["screening", "useGeckoSignals"],
-      useBitquerySignals: ["screening", "useBitquerySignals"],
-      useHeliusSignals: ["screening", "useHeliusSignals"],
-      requireSmartWalletSignal: ["management", "requireSmartWalletSignal"],
-      smartWalletReducedDeploySol: ["management", "smartWalletReducedDeploySol"],
-      smartWalletSignalVolThreshold: ["management", "smartWalletSignalVolThreshold"],
-      highVolBinsBelowThreshold: ["strategy", "highVolBinsBelowThreshold"],
       minFeePerTvl24h: ["management", "minFeePerTvl24h"],
       // management
       minClaimAmount: ["management", "minClaimAmount"],
       autoSwapAfterClaim: ["management", "autoSwapAfterClaim"],
       outOfRangeBinsToClose: ["management", "outOfRangeBinsToClose"],
       outOfRangeWaitMinutes: ["management", "outOfRangeWaitMinutes"],
-      oorWaitLowVolMin: ["management", "oorWaitLowVolMin"],
-      oorWaitMidVolMin: ["management", "oorWaitMidVolMin"],
-      oorWaitLowVolThreshold: ["management", "oorWaitLowVolThreshold"],
-      oorWaitMidVolThreshold: ["management", "oorWaitMidVolThreshold"],
       oorCooldownTriggerCount: ["management", "oorCooldownTriggerCount"],
       oorCooldownHours: ["management", "oorCooldownHours"],
       repeatDeployCooldownEnabled: ["management", "repeatDeployCooldownEnabled"],
@@ -460,19 +396,6 @@ const toolMap = {
       gasReserve: ["management", "gasReserve"],
       positionSizePct: ["management", "positionSizePct"],
       minAgeBeforeYieldCheck: ["management", "minAgeBeforeYieldCheck"],
-      minClosePnlUsd: ["management", "minClosePnlUsd"],
-      bigLossBlacklistPct: ["management", "bigLossBlacklistPct"],
-      bigLossBlacklistHours: ["management", "bigLossBlacklistHours"],
-      flashDumpEnabled: ["management", "flashDumpEnabled"],
-      flashDumpDropPct: ["management", "flashDumpDropPct"],
-      flashDumpWindowMin: ["management", "flashDumpWindowMin"],
-      timeStopHours: ["management", "timeStopHours"],
-      timeStopUnderwaterPct: ["management", "timeStopUnderwaterPct"],
-      whaleTvlDropPct: ["management", "whaleTvlDropPct"],
-      whaleTvlMinAgeMinutes: ["management", "whaleTvlMinAgeMinutes"],
-      deadDeployMinutes: ["management", "deadDeployMinutes"],
-      deadDeployMinPnlPct: ["management", "deadDeployMinPnlPct"],
-      deadFeePerSol: ["management", "deadFeePerSol"],
       // risk
       maxPositions: ["risk", "maxPositions"],
       maxDeployAmount: ["risk", "maxDeployAmount"],
@@ -502,6 +425,14 @@ const toolMap = {
       publicApiKey: ["api", "publicApiKey"],
       agentMeridianApiUrl: ["api", "url"],
       lpAgentRelayEnabled: ["api", "lpAgentRelayEnabled"],
+      // pnl fetcher / poller
+      pnlSource: ["pnl", "source", ["pnlSource"]],
+      pnlRpcUrl: ["pnl", "rpcUrl", ["pnlRpcUrl"]],
+      pnlPollIntervalSec: ["pnl", "pollIntervalSec", ["pnlPollIntervalSec"]],
+      pnlDepositCacheTtlSec: ["pnl", "depositCacheTtlSec", ["pnlDepositCacheTtlSec"]],
+      // gmgn fee source
+      gmgnFeeSource: ["gmgn", "feeSource", ["gmgnFeeSource"]],
+      gmgnApiKey: ["gmgn", "apiKey", ["gmgnApiKey"]],
       // chart indicators
       chartIndicatorsEnabled: ["indicators", "enabled", ["chartIndicators", "enabled"]],
       indicatorEntryPreset: ["indicators", "entryPreset", ["chartIndicators", "entryPreset"]],
@@ -561,8 +492,20 @@ const toolMap = {
       }
     }
 
+    // Auto-scale fee/volume when timeframe changes (unless user set them explicitly in same call).
+    if (applied.timeframe != null && applied.minFeeActiveTvlRatio == null && applied.minVolume == null) {
+      const tf = normalizeTimeframe(applied.timeframe);
+      applied.timeframe = tf;
+      const scaled = scaleScreeningToTimeframe(tf);
+      applied.minFeeActiveTvlRatio = scaled.minFeeActiveTvlRatio;
+      applied.minVolume = scaled.minVolume;
+      applied._timeframeScaled = true;
+      log("config", `timeframe ${tf} → auto-scaled minFeeActiveTvlRatio=${scaled.minFeeActiveTvlRatio}, minVolume=${scaled.minVolume}`);
+    }
+
     // Apply to live config immediately after the persisted config is known-good.
     for (const [key, val] of Object.entries(applied)) {
+      if (key.startsWith("_")) continue;
       const [section, field] = CONFIG_MAP[key];
       const before = config[section][field];
       config[section][field] = val;
@@ -586,6 +529,7 @@ const toolMap = {
     }
 
     for (const [key, val] of Object.entries(applied)) {
+      if (key.startsWith("_")) continue;
       const persistPath = CONFIG_MAP[key]?.[2];
       if (Array.isArray(persistPath) && persistPath.length > 0) {
         let target = userConfig;
@@ -604,15 +548,15 @@ const toolMap = {
     fs.writeFileSync(USER_CONFIG_PATH, JSON.stringify(userConfig, null, 2));
 
     // Restart cron jobs if intervals changed
-    const intervalChanged = applied.managementIntervalMin != null || applied.screeningIntervalMin != null;
+    const intervalChanged = applied.managementIntervalMin != null || applied.screeningIntervalMin != null || applied.pnlPollIntervalSec != null;
     if (intervalChanged && _cronRestarter) {
       _cronRestarter();
-      log("config", `Cron restarted — management: ${config.schedule.managementIntervalMin}m, screening: ${config.schedule.screeningIntervalMin}m`);
+      log("config", `Cron restarted — management: ${config.schedule.managementIntervalMin}m, screening: ${config.schedule.screeningIntervalMin}m, pnlPoll: ${config.pnl.pollIntervalSec}s`);
     }
 
     // Skip repeated volatility-driven interval changes; they are operational tuning, not reusable lessons.
     const lessonsKeys = Object.keys(applied).filter(
-      k => k !== "managementIntervalMin" && k !== "screeningIntervalMin"
+      k => !k.startsWith("_") && k !== "managementIntervalMin" && k !== "screeningIntervalMin"
     );
     if (lessonsKeys.length > 0) {
       const summary = lessonsKeys.map(k => `${k}=${applied[k]}`).join(", ");
@@ -658,34 +602,6 @@ export async function executeTool(name, args) {
     const safetyCheck = await runSafetyChecks(name, args);
     if (!safetyCheck.pass) {
       log("safety_block", `${name} blocked: ${safetyCheck.reason}`);
-      if (name === "deploy_position" && args?.pool_address) {
-        const transientReasons = [
-          "fee/active-TVL",
-          "volatility",
-        ];
-        if (transientReasons.some((needle) => safetyCheck.reason?.includes(needle))) {
-          markPoolSafetyBlocked(args.pool_address, {
-            poolName: args.pool_name || null,
-            hours: 0.5,
-            reason: safetyCheck.reason.slice(0, 120),
-          });
-        }
-        try {
-          recordSkip({
-            pool: args.pool_address,
-            name: args.pool_name,
-            reason: safetyCheck.reason,
-            source: "safety_block",
-            metrics: {
-              volatility: args.volatility,
-              fee_active_tvl_ratio: args.fee_tvl_ratio,
-              organic_score: args.organic_score,
-              bin_step: args.bin_step,
-              price_at_skip: args.active_price ?? args.current_price ?? null,
-            },
-          });
-        } catch {}
-      }
       return {
         blocked: true,
         reason: safetyCheck.reason,
@@ -711,21 +627,9 @@ export async function executeTool(name, args) {
       if (name === "swap_token" && result.tx) {
         notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "So11111111111111111111111111111111111111112" || args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => {});
       } else if (name === "deploy_position") {
-        notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee, strategy: result.strategy ?? args.strategy ?? null }).catch(() => {});
+        notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
       } else if (name === "close_position") {
-        notifyClose({
-          pair: result.pool_name || args.position_address?.slice(0, 8),
-          pnlUsd: result.pnl_usd ?? 0,
-          pnlPct: result.pnl_pct ?? 0,
-          feesUsd: result.fees_usd ?? 0,
-          initialUsd: result.initial_usd ?? 0,
-          finalUsd: result.final_usd ?? 0,
-          txCount: result.tx_count ?? (result.txs?.length ?? 0),
-          reason: args.reason ?? result.close_reason ?? null,
-          minutesHeld: result.minutes_held ?? null,
-          strategy: result.strategy ?? null,
-          amountSol: result.amount_sol ?? null,
-        }).catch(() => {});
+        notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0 }).catch(() => {});
         // Note low-yield closes in pool memory so screener avoids redeploying
         if (args.reason && args.reason.toLowerCase().includes("yield")) {
           const poolAddr = result.pool || args.pool_address;
@@ -759,24 +663,6 @@ export async function executeTool(name, args) {
         } catch (e) {
           log("executor_warn", `Auto-swap after claim failed: ${e.message}`);
         }
-      } else if (name === "get_position_pnl" && config.indicators.enabled && config.indicators.exitPreset) {
-        try {
-          const { getTrackedPosition } = await import("../state.js");
-          const tracked = getTrackedPosition(args.position_address);
-          const baseMint = tracked?.base_mint;
-          if (baseMint) {
-            const { confirmIndicatorPreset } = await import("./chart-indicators.js");
-            const exitCheck = await confirmIndicatorPreset({ mint: baseMint, side: "exit" });
-            result.exit_signal = {
-              confirmed: exitCheck.confirmed,
-              preset: exitCheck.preset,
-              reason: exitCheck.reason,
-              skipped: exitCheck.skipped ?? false,
-            };
-          }
-        } catch (e) {
-          log("executor_warn", `Exit indicator check failed: ${e.message}`);
-        }
       }
     }
 
@@ -806,38 +692,9 @@ export async function executeTool(name, args) {
 async function runSafetyChecks(name, args) {
   switch (name) {
     case "deploy_position": {
-      // Validate base_mint is a Solana address, not a ticker symbol
-      if (args.base_mint != null && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(args.base_mint))) {
-        return {
-          pass: false,
-          reason: `base_mint "${args.base_mint}" is not a valid Solana address. Pass the mint address, not the token symbol.`,
-        };
-      }
-      // Reject non-SOL quote tokens — agent is SOL-only, USDC/other pairs will fail on insufficient funds
-      const SOL_MINT = "So11111111111111111111111111111111111111112";
-      if (args.quote_mint && args.quote_mint !== SOL_MINT && args.quote_mint !== "SOL") {
-        return {
-          pass: false,
-          reason: `quote_mint "${args.quote_mint}" is not SOL. Only SOL-paired pools are supported (wallet holds no USDC/other tokens).`,
-        };
-      }
       const poolThresholds = await validateDeployPoolThresholds(args);
       if (!poolThresholds.pass) return poolThresholds;
-
-      // Reject pools that whipsawed (multiple volatility cooldowns in recent window).
-      // Catches tokens like grail-SOL chopping between vol 3-5 over a few hours — even
-      // if current vol momentarily drops below cap, recent instability predicts SL hits.
-      const volBlockWindowH = Number(config.management.recentVolBlockWindowHours ?? 4);
-      const volBlockMaxCount = Number(config.management.recentVolBlockMaxCount ?? 2);
-      if (volBlockWindowH > 0 && volBlockMaxCount > 0 && args.pool_address) {
-        const recentBlocks = countRecentVolBlocks(args.pool_address, volBlockWindowH);
-        if (recentBlocks >= volBlockMaxCount) {
-          return {
-            pass: false,
-            reason: `Pool had ${recentBlocks} volatility cooldown(s) in last ${volBlockWindowH}h. Token is whipsawing — refusing deploy.`,
-          };
-        }
-      }
+      if (poolThresholds.entryMarketData) Object.assign(args, poolThresholds.entryMarketData);
 
       // Reject pools with bin_step out of configured range
       const minStep = config.screening.minBinStep;
@@ -869,13 +726,6 @@ async function runSafetyChecks(name, args) {
           reason: `volatility ${args.volatility} is invalid. Refusing deploy because the volatility feed is unusable.`,
         };
       }
-      const maxVolCap = Number(config.screening.maxVolatility);
-      if (Number.isFinite(maxVolCap) && maxVolCap > 0 && requestedVolatility != null && requestedVolatility > maxVolCap) {
-        return {
-          pass: false,
-          reason: `volatility ${requestedVolatility} exceeds maxVolatility ${maxVolCap}. Token is in extreme pump phase — refusing deploy.`,
-        };
-      }
       if (
         args.downside_pct == null &&
         args.upside_pct == null &&
@@ -903,22 +753,6 @@ async function runSafetyChecks(name, args) {
           pass: false,
           reason: `bins_below ${args.bins_below ?? "missing"} is below minimum ${minBinsBelow}. Refusing 1-bin/tiny-range deploy.`,
         };
-      }
-
-      // Force deeper bins on mid/high-vol pools to absorb dumps (grail/PP420 pattern).
-      // Auto-coerce rather than reject — LLM's first attempt succeeds with deeper range.
-      const highVolBinsThreshold = Number(config.strategy.highVolBinsBelowThreshold ?? 2.5);
-      const maxBinsBelow = Number(config.strategy.maxBinsBelow ?? 65);
-      if (
-        isSingleSidedSol &&
-        args.downside_pct == null &&
-        requestedVolatility != null &&
-        requestedVolatility >= highVolBinsThreshold &&
-        Number.isFinite(requestedBinsBelow) &&
-        requestedBinsBelow < maxBinsBelow
-      ) {
-        log("safety_coerce", `deploy_position: volatility ${requestedVolatility} >= ${highVolBinsThreshold} — overriding bins_below ${requestedBinsBelow} → ${maxBinsBelow}`);
-        args.bins_below = maxBinsBelow;
       }
       if (
         isSingleSidedSol &&
@@ -951,14 +785,6 @@ async function runSafetyChecks(name, args) {
 
       // Block same base token across different pools
       if (args.base_mint) {
-        // Reject placeholder/bogus mints (e.g. "grail_base_mint") that bypass holder/audit checks
-        const SOLANA_MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-        if (!SOLANA_MINT_RE.test(args.base_mint)) {
-          return {
-            pass: false,
-            reason: `base_mint "${args.base_mint}" is not a valid Solana address. Refusing deploy — fetch real mint via get_pool_detail first.`,
-          };
-        }
         const alreadyHasMint = positions.positions.some(
           (p) => p.base_mint === args.base_mint
         );
@@ -966,27 +792,6 @@ async function runSafetyChecks(name, args) {
           return {
             pass: false,
             reason: `Already holding base token ${args.base_mint} in another pool. One position per token only.`,
-          };
-        }
-      }
-
-      // Smart wallet signal gate — only enforced on high-vol pools where dump risk is high.
-      // PP420/grail (vol 2-3) dumped without smart wallet confirmation; PARALOOM had 6/22.
-      const requireSmartSignal = config.management.requireSmartWalletSignal === true;
-      const smartSignalVolThresh = Number(config.management.smartWalletSignalVolThreshold ?? 2.5);
-      const reducedDeployCap = Number(config.management.smartWalletReducedDeploySol ?? 0.3);
-      if (
-        requireSmartSignal &&
-        args.pool_address &&
-        deployAmountY > reducedDeployCap &&
-        requestedVolatility != null &&
-        requestedVolatility >= smartSignalVolThresh
-      ) {
-        const swCheck = await checkSmartWalletsOnPool({ pool_address: args.pool_address });
-        if (swCheck && swCheck.tracked_wallets > 0 && swCheck.in_pool.length === 0) {
-          return {
-            pass: false,
-            reason: `High-vol pool (${requestedVolatility} >= ${smartSignalVolThresh}) with no smart wallet signal: 0/${swCheck.tracked_wallets} tracked LP wallets in pool. Reduce deploy to <=${reducedDeployCap} SOL or pick a pool with smart wallet confluence.`,
           };
         }
       }

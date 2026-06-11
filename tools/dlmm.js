@@ -24,12 +24,12 @@ import {
   syncOpenPositions,
 } from "../state.js";
 import { recordPerformance } from "../lessons.js";
-import { notifyClose } from "../telegram.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { normalizeMint } from "./wallet.js";
 import { appendDecision } from "../decision-log.js";
 import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "./agent-meridian.js";
 import { getAndClearStagedSignals } from "../signal-tracker.js";
+import { computePositions, fetchDlmmPnlForPool } from "./pnl.js";
 
 // ─── Lazy SDK loader ───────────────────────────────────────────
 // @meteora-ag/dlmm → @coral-xyz/anchor uses CJS directory imports
@@ -465,9 +465,13 @@ export async function deployPosition({
   base_fee,
   volatility,
   fee_tvl_ratio,
-  pool_tvl,
   organic_score,
   initial_value_usd,
+  // entry market conditions (injected by executor safety checks)
+  entry_mcap,
+  entry_tvl,
+  entry_volume,
+  entry_holders,
 }) {
   pool_address = normalizeMint(pool_address);
   const activeStrategy = strategy || config.strategy.strategy;
@@ -698,14 +702,16 @@ export async function deployPosition({
           bin_step,
           volatility: normalizedVolatility,
           fee_tvl_ratio,
-          entry_tvl: pool_tvl ?? null,
           organic_score,
           amount_sol: finalAmountY,
           amount_x: finalAmountX,
           active_bin: activeBin.binId,
           initial_value_usd,
           signal_snapshot: signalSnapshot,
-          base_mint: baseMint,
+          entry_mcap,
+          entry_tvl,
+          entry_volume,
+          entry_holders,
         });
       }
 
@@ -838,14 +844,16 @@ export async function deployPosition({
       bin_step,
       volatility: normalizedVolatility,
       fee_tvl_ratio,
-      entry_tvl: pool_tvl ?? null,
       organic_score,
       amount_sol: finalAmountY,
       amount_x: finalAmountX,
       active_bin: activeBin.binId,
       initial_value_usd,
       signal_snapshot: signalSnapshot,
-      base_mint: baseMint,
+      entry_mcap,
+      entry_tvl,
+      entry_volume,
+      entry_holders,
     });
 
     appendDecision({
@@ -934,39 +942,13 @@ async function fetchLpAgentOpenPositions(walletAddress) {
   }
 }
 
-// ─── Fetch DLMM PnL API for all positions in a pool ────────────
-async function fetchDlmmPnlForPool(poolAddress, walletAddress) {
-  const url = `https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${walletAddress}&status=open&pageSize=100&page=1`;
-  try {
-    const res = await fetch(url);
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      log("pnl_api", `HTTP ${res.status} for pool ${poolAddress.slice(0, 8)}: ${body.slice(0, 120)}`);
-      return {};
-    }
-    const data = await res.json();
-    const positions = data.positions || data.data || [];
-    if (positions.length === 0) {
-      log("pnl_api", `No positions returned for pool ${poolAddress.slice(0, 8)} — keys: ${Object.keys(data).join(", ")}`);
-    }
-    const byAddress = {};
-    for (const p of positions) {
-      const addr = p.positionAddress || p.address || p.position;
-      if (addr) byAddress[addr] = p;
-    }
-    return byAddress;
-  } catch (e) {
-    log("pnl_api", `Fetch error for pool ${poolAddress.slice(0, 8)}: ${e.message}`);
-    return {};
-  }
-}
-
 // ─── Get Position PnL (Meteora API) ─────────────────────────────
 export async function getPositionPnl({ pool_address, position_address }) {
   pool_address = normalizeMint(pool_address);
   position_address = normalizeMint(position_address);
   const walletAddress = getWallet().publicKey.toString();
-  if (shouldUseLpAgentRelay()) {
+  // Prefer the public-infra path (RPC + Jupiter + Meteora deposits) used by getMyPositions.
+  if (config.pnl.source === "rpc") {
     try {
       const payload = await getMyPositions({ force: true, silent: true });
       const p = payload?.positions?.find((position) => position.position === position_address);
@@ -983,12 +965,10 @@ export async function getPositionPnl({ pool_address, position_address }) {
           upper_bin: p.upper_bin,
           active_bin: p.active_bin,
           age_minutes: p.age_minutes,
-          request_id: payload?.request_id || null,
         };
       }
-      log("pnl_warn", "Relay positions API did not include requested position; falling back to Meteora PnL path");
     } catch (error) {
-      log("pnl_warn", `Relay PnL lookup failed; falling back to Meteora PnL path: ${error.message}`);
+      log("pnl_warn", `RPC PnL lookup failed; falling back to direct Meteora PnL path: ${error.message}`);
     }
   }
   try {
@@ -1179,24 +1159,25 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
   }
 
   const loadPositions = async () => { try {
-    let relayLpAgentByPosition = null;
-    let relayRequestId = null;
-    if (shouldUseLpAgentRelay()) {
+    // ── Primary path: public infra (on-chain RPC + Jupiter + Meteora deposits) ──
+    // No LPAgent / agentmeridian dependency, so the poller runs aggressively on
+    // fully public resources. Falls through to the Meteora-API path on any error.
+    if (config.pnl.source === "rpc") {
       try {
-        if (!silent) log("positions", "Fetching raw LPAgent open positions via Agent Meridian relay...");
-        const result = await fetchRawOpenPositionsFromMeridian({
-          walletAddress,
-          agentId: getAgentIdForRequests(),
-        });
-        relayLpAgentByPosition = result.byPosition || {};
-        relayRequestId = result.requestId || result.request_id || null;
+        if (!silent) log("positions", `Computing PnL from RPC (${config.pnl.rpcUrl})...`);
+        const rpcResult = await computePositions(walletAddress);
+        if (useLocalWallet) {
+          syncOpenPositions(rpcResult.positions.map((p) => p.position));
+          _positionsCache = rpcResult;
+          _positionsCacheAt = Date.now();
+        }
+        return rpcResult;
       } catch (error) {
-        log("positions_warn", `Agent Meridian raw relay failed; falling back to direct LPAgent fetch: ${error.message}`);
+        log("positions_warn", `RPC PnL path failed; falling back to Meteora portfolio API: ${error.message}`);
       }
     }
 
-    // Portfolio API discovers open pools/positions for this wallet.
-    // Detailed range data stays on Meteora PnL API; value/PnL can be overridden by LPAgent below.
+    // ── Fallback path: Meteora portfolio + /pnl APIs (no LPAgent) ──
     if (!silent) log("positions", "Fetching portfolio via Meteora portfolio API...");
     const portfolioUrl = `https://dlmm.datapi.meteora.ag/portfolio/open?user=${walletAddress}`;
     const res = await fetch(portfolioUrl);
@@ -1211,7 +1192,7 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
     const binDataByPool = {};
     const pnlMaps = await Promise.all(pools.map(pool => fetchDlmmPnlForPool(pool.poolAddress, walletAddress)));
     pools.forEach((pool, i) => { binDataByPool[pool.poolAddress] = pnlMaps[i]; });
-    const lpAgentByPosition = relayLpAgentByPosition || await fetchLpAgentOpenPositions(walletAddress);
+    const lpAgentByPosition = {}; // LPAgent removed — Meteora binData only
 
     const positions = [];
     for (const pool of pools) {
@@ -1339,7 +1320,6 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
           age_minutes:        binData?.createdAt ? Math.floor((Date.now() - binData.createdAt * 1000) / 60000) : ageFromState,
           minutes_out_of_range: minutesOutOfRange(positionAddress),
           instruction:        tracked?.instruction ?? null,
-          volatility:         tracked?.volatility ?? null,
         });
       }
     }
@@ -1348,24 +1328,10 @@ export async function getMyPositions({ force = false, silent = false, wallet_add
       wallet: walletAddress,
       total_positions: positions.length,
       positions,
-      request_id: relayRequestId,
+      source: "meteora",
     };
     if (useLocalWallet) {
-      const autoClosed = syncOpenPositions(positions.map(p => p.position));
-      for (const pos of autoClosed) {
-        const deployedAt = pos.deployed_at ? new Date(pos.deployed_at).getTime() : null;
-        const minutesHeld = deployedAt ? Math.floor((Date.now() - deployedAt) / 60000) : null;
-        notifyClose({
-          pair: pos.pool_name || pos.position?.slice(0, 8),
-          pnlUsd: 0,
-          pnlPct: 0,
-          feesUsd: 0,
-          reason: "position disappeared from on-chain (auto-synced)",
-          minutesHeld,
-          strategy: pos.strategy || null,
-          amountSol: pos.amount_sol || null,
-        }).catch(() => {});
-      }
+      syncOpenPositions(positions.map(p => p.position));
       _positionsCache = result;
       _positionsCacheAt = Date.now();
     }
@@ -1625,26 +1591,13 @@ export async function closePosition({ position_address, reason }) {
       }
 
       if (!closedConfirmed) {
-        log("close_warn", `Close unconfirmed after verification window — assuming closed (TX went through): ${closeTxHashes.join(",")}`);
-        recordClose(position_address, (reason || "agent decision") + " [unconfirmed]");
         return {
-          success: true,
-          warning: "Close TX sent but could not verify within window — position assumed closed",
+          success: false,
+          error: "Close submit succeeded but position still appears open after verification window",
           position: position_address,
           pool: poolAddress,
-          pool_name: tracked?.pool_name || null,
-          base_mint: tracked?.base_mint || livePosition?.base_mint || null,
           close_txs: closeTxHashes,
           txs: txHashes,
-          tx_count: txHashes.length,
-          pnl_usd: 0,
-          pnl_pct: 0,
-          fees_usd: 0,
-          initial_usd: tracked?.amount_usd ?? 0,
-          final_usd: 0,
-          minutes_held: tracked ? Math.floor((Date.now() - new Date(tracked.deployed_at).getTime()) / 60000) : null,
-          strategy: tracked?.strategy || null,
-          close_reason: reason || "agent decision",
         };
       }
 
@@ -1664,7 +1617,6 @@ export async function closePosition({ position_address, reason }) {
         let finalValueUsd = 0;
         let initialUsd = 0;
         let feesUsd = tracked.total_fees_claimed_usd || 0;
-        let feesSol = tracked.total_fees_claimed_sol || 0;
         try {
           const closedUrl = `https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${wallet.publicKey.toString()}&status=closed&pageSize=50&page=1`;
           for (let attempt = 0; attempt < 6; attempt++) {
@@ -1679,7 +1631,6 @@ export async function closePosition({ position_address, reason }) {
                 finalValueUsd = parseFloat(posEntry.allTimeWithdrawals?.total?.usd || 0);
                 initialUsd = parseFloat(posEntry.allTimeDeposits?.total?.usd || 0);
                 feesUsd = parseFloat(posEntry.allTimeFees?.total?.usd || 0) || feesUsd;
-                feesSol = parseFloat(posEntry.allTimeFees?.total?.sol || 0) || feesSol;
                 break;
               }
             }
@@ -1696,6 +1647,20 @@ export async function closePosition({ position_address, reason }) {
           tracked,
         });
 
+        let exitMarket = {};
+        try {
+          const { default: fetch } = await import("node-fetch").catch(() => ({ default: globalThis.fetch }));
+          const exitDetail = await fetch(`https://pool-discovery-api.datapi.meteora.ag/pools?page_size=1&filter_by=${encodeURIComponent(`pool_address=${poolAddress}`)}&timeframe=${encodeURIComponent(config.screening?.timeframe || "5m")}`).then(r => r.json()).catch(() => null);
+          const ep = exitDetail?.data?.[0];
+          if (ep) {
+            exitMarket = {
+              exit_mcap: parseFloat(ep?.token_x?.market_cap) || null,
+              exit_tvl: parseFloat(ep?.tvl ?? ep?.active_tvl) || null,
+              exit_volume: parseFloat(ep?.volume) || null,
+            };
+          }
+        } catch { /* non-blocking */ }
+
         await recordPerformance({
           position: position_address,
           pool: poolAddress,
@@ -1709,13 +1674,17 @@ export async function closePosition({ position_address, reason }) {
           organic_score: tracked.organic_score || null,
           amount_sol: tracked.amount_sol,
           fees_earned_usd: feesUsd,
-          fees_earned_sol: feesSol,
           final_value_usd: finalValueUsd,
           initial_value_usd: initialUsd,
           minutes_in_range: minutesHeld - minutesOOR,
           minutes_held: minutesHeld,
           close_reason: reason || "agent decision",
           signal_snapshot: signalSnapshot,
+          entry_mcap: tracked.entry_mcap ?? null,
+          entry_tvl: tracked.entry_tvl ?? null,
+          entry_volume: tracked.entry_volume ?? null,
+          entry_holders: tracked.entry_holders ?? null,
+          ...exitMarket,
         });
 
         appendDecision({
@@ -1881,27 +1850,14 @@ export async function closePosition({ position_address, reason }) {
     }
 
     if (!closedConfirmed) {
-      log("close_warn", `Close unconfirmed after verification window — assuming closed (TX went through): ${closeTxHashes.join(",")}`);
-      recordClose(position_address, (reason || "agent decision") + " [unconfirmed]");
       return {
-        success: true,
-        warning: "Close TX sent but could not verify within window — position assumed closed",
+        success: false,
+        error: "Close transactions sent but position still appears open after verification window",
         position: position_address,
         pool: poolAddress,
-        pool_name: tracked?.pool_name || null,
-        base_mint: tracked?.base_mint || null,
         claim_txs: claimTxHashes,
         close_txs: closeTxHashes,
         txs: txHashes,
-        tx_count: txHashes.length,
-        pnl_usd: 0,
-        pnl_pct: 0,
-        fees_usd: 0,
-        initial_usd: tracked?.amount_usd ?? 0,
-        final_usd: 0,
-        minutes_held: tracked ? Math.floor((Date.now() - new Date(tracked.deployed_at).getTime()) / 60000) : null,
-        strategy: tracked?.strategy || null,
-        close_reason: reason || "agent decision",
       };
     }
 
@@ -1920,10 +1876,10 @@ export async function closePosition({ position_address, reason }) {
       const shouldRejectClosedPnl = (pct, closeReasonText) => {
         if (!Number.isFinite(pct)) return false;
         const reasonText = String(closeReasonText || "").toLowerCase();
-        const safetyTrigger = reasonText.includes("stop loss") || reasonText.includes("flash dump");
+        const stopLossTriggered = reasonText.includes("stop loss");
         // Meteora sometimes briefly reports absurd closed pnl while the record is settling.
-        // Trust legitimate safety-trigger disasters, but reject obviously unsettled outliers otherwise.
-        return !safetyTrigger && pct <= -90;
+        // Trust legitimate stop-loss disasters, but reject obviously unsettled outliers otherwise.
+        return !stopLossTriggered && pct <= -90;
       };
 
       // Fetch closed PnL from API — authoritative source after withdrawal settles
@@ -1933,7 +1889,6 @@ export async function closePosition({ position_address, reason }) {
       let finalValueUsd = 0;
       let initialUsd = 0;
       let feesUsd = tracked.total_fees_claimed_usd || 0;
-      let feesSol = tracked.total_fees_claimed_sol || 0;
       try {
         const closedUrl = `https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?user=${wallet.publicKey.toString()}&status=closed&pageSize=50&page=1`;
         for (let attempt = 0; attempt < 6; attempt++) {
@@ -1948,7 +1903,6 @@ export async function closePosition({ position_address, reason }) {
               const nextFinalValueUsd = parseFloat(posEntry.allTimeWithdrawals?.total?.usd || 0);
               const nextInitialUsd = parseFloat(posEntry.allTimeDeposits?.total?.usd || 0);
               const nextFeesUsd = parseFloat(posEntry.allTimeFees?.total?.usd || 0) || feesUsd;
-              const nextFeesSol = parseFloat(posEntry.allTimeFees?.total?.sol || 0) || feesSol;
 
               if (shouldRejectClosedPnl(nextPnlPct, reason || tracked?.close_reason)) {
                 log("close_warn", `Rejected unsettled closed PnL for ${position_address.slice(0, 8)} on attempt ${attempt + 1}/6: ${nextPnlPct.toFixed(2)}%`);
@@ -1959,8 +1913,7 @@ export async function closePosition({ position_address, reason }) {
                 finalValueUsd = nextFinalValueUsd;
                 initialUsd    = nextInitialUsd;
                 feesUsd       = nextFeesUsd;
-                feesSol       = nextFeesSol;
-                log("close", `Closed PnL from API: pnl=${pnlUsd.toFixed(2)} ${config.management.solMode ? "SOL" : "USD"} (${pnlPct.toFixed(2)}%), withdrawn=${finalValueUsd.toFixed(2)} USD, deposited=${initialUsd.toFixed(2)} USD, fees=${feesSol.toFixed(4)} SOL / $${feesUsd.toFixed(2)}`);
+                log("close", `Closed PnL from API: pnl=${pnlUsd.toFixed(2)} ${config.management.solMode ? "SOL" : "USD"} (${pnlPct.toFixed(2)}%), withdrawn=${finalValueUsd.toFixed(2)} USD, deposited=${initialUsd.toFixed(2)} USD`);
                 break;
               }
             } else {
@@ -2000,6 +1953,19 @@ export async function closePosition({ position_address, reason }) {
         tracked,
       });
 
+      let exitMarket = {};
+      try {
+        const exitDetail = await fetch(`https://pool-discovery-api.datapi.meteora.ag/pools?page_size=1&filter_by=${encodeURIComponent(`pool_address=${poolAddress}`)}&timeframe=${encodeURIComponent(config.screening?.timeframe || "5m")}`).then(r => r.json()).catch(() => null);
+        const ep = exitDetail?.data?.[0];
+        if (ep) {
+          exitMarket = {
+            exit_mcap: parseFloat(ep?.token_x?.market_cap) || null,
+            exit_tvl: parseFloat(ep?.tvl ?? ep?.active_tvl) || null,
+            exit_volume: parseFloat(ep?.volume) || null,
+          };
+        }
+      } catch { /* non-blocking */ }
+
       await recordPerformance({
         position: position_address,
         pool: poolAddress,
@@ -2013,13 +1979,17 @@ export async function closePosition({ position_address, reason }) {
         organic_score: tracked.organic_score || null,
         amount_sol: tracked.amount_sol,
         fees_earned_usd: feesUsd,
-        fees_earned_sol: feesSol,
         final_value_usd: finalValueUsd,
         initial_value_usd: initialUsd,
         minutes_in_range: minutesHeld - minutesOOR,
         minutes_held: minutesHeld,
         close_reason: reason || "agent decision",
         signal_snapshot: signalSnapshot,
+        entry_mcap: tracked.entry_mcap ?? null,
+        entry_tvl: tracked.entry_tvl ?? null,
+        entry_volume: tracked.entry_volume ?? null,
+        entry_holders: tracked.entry_holders ?? null,
+        ...exitMarket,
       });
 
       appendDecision({
@@ -2052,15 +2022,7 @@ export async function closePosition({ position_address, reason }) {
         txs: txHashes,
         pnl_usd: pnlUsd,
         pnl_pct: pnlPct,
-        fees_usd: feesUsd,
-        fees_sol: feesSol,
-        initial_usd: initialUsd,
-        final_usd: finalValueUsd,
-        tx_count: txHashes.length,
         base_mint: closeBaseMint,
-        minutes_held: minutesHeld,
-        strategy: tracked.strategy || null,
-        amount_sol: tracked.amount_sol ?? null,
       };
     }
 

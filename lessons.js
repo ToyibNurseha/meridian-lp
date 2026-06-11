@@ -7,15 +7,13 @@
  */
 
 import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import { log } from "./logger.js";
 import { getSharedLessonsForPrompt, pushHiveLesson, pushHivePerformanceEvent } from "./hivemind.js";
+import { repoPath } from "./repo-root.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
+const USER_CONFIG_PATH = repoPath("user-config.json");
 
-const LESSONS_FILE = "./lessons.json";
+const LESSONS_FILE = repoPath("lessons.json");
 const MIN_EVOLVE_POSITIONS = 5;   // don't evolve until we have real data
 const MAX_CHANGE_PER_STEP  = 0.20; // never shift a threshold more than 20% at once
 const PERFORMANCE_SIGNAL_FIELDS = [
@@ -186,17 +184,13 @@ export async function recordPerformance(perf) {
     });
   }
 
-  // Evolve thresholds every 5 closed positions (skip if user disabled via config)
+  // Evolve thresholds every 5 closed positions
   if (data.performance.length % MIN_EVOLVE_POSITIONS === 0) {
     const { config, reloadScreeningThresholds } = await import("./config.js");
-    if (config.evolution?.autoEvolveEnabled === false) {
-      log("evolve", `Auto-evolve disabled by config — skipping threshold evolution`);
-    } else {
-      const result = evolveThresholds(data.performance, config);
-      if (result?.changes && Object.keys(result.changes).length > 0) {
-        reloadScreeningThresholds();
-        log("evolve", `Auto-evolved thresholds: ${JSON.stringify(result.changes)}`);
-      }
+    const result = evolveThresholds(data.performance, config);
+    if (result?.changes && Object.keys(result.changes).length > 0) {
+      reloadScreeningThresholds();
+      log("evolve", `Auto-evolved thresholds: ${JSON.stringify(result.changes)}`);
     }
 
     // Darwinian signal weight recalculation
@@ -237,8 +231,9 @@ function derivLesson(perf) {
 
   if (outcome === "neutral") return null; // nothing interesting to learn
 
-  // Build context description
-  const context = [
+  // Build context description with entry/exit market conditions
+  const fmtNum = (n) => n == null ? "?" : n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : String(Math.round(n));
+  const contextParts = [
     `${perf.pool_name}`,
     `strategy=${perf.strategy}`,
     `bin_step=${perf.bin_step}`,
@@ -246,7 +241,14 @@ function derivLesson(perf) {
     `fee_tvl_ratio=${perf.fee_tvl_ratio}`,
     `organic=${perf.organic_score}`,
     `bin_range=${typeof perf.bin_range === 'object' ? JSON.stringify(perf.bin_range) : perf.bin_range}`,
-  ].join(", ");
+  ];
+  if (perf.entry_mcap != null || perf.entry_tvl != null || perf.entry_volume != null) {
+    contextParts.push(`entry(mcap=${fmtNum(perf.entry_mcap)}, tvl=${fmtNum(perf.entry_tvl)}, vol=${fmtNum(perf.entry_volume)})`);
+  }
+  if (perf.exit_mcap != null || perf.exit_tvl != null || perf.exit_volume != null) {
+    contextParts.push(`exit(mcap=${fmtNum(perf.exit_mcap)}, tvl=${fmtNum(perf.exit_tvl)}, vol=${fmtNum(perf.exit_volume)})`);
+  }
+  const context = contextParts.join(", ");
 
   let rule = "";
 
@@ -255,7 +257,8 @@ function derivLesson(perf) {
       rule = `AVOID: ${perf.pool_name}-type pools (volatility=${perf.volatility}, bin_step=${perf.bin_step}) with strategy="${perf.strategy}" — went OOR ${100 - perf.range_efficiency}% of the time. Consider wider bin_range or bid_ask strategy.`;
       tags.push("oor", perf.strategy, `volatility_${Math.round(perf.volatility)}`);
     } else if (perf.range_efficiency > 80 && outcome === "good") {
-      rule = `PREFER: ${perf.pool_name}-type pools (volatility=${perf.volatility}, bin_step=${perf.bin_step}) with strategy="${perf.strategy}" — ${perf.range_efficiency}% in-range efficiency, PnL +${perf.pnl_pct}%.`;
+      const entryNote = perf.entry_mcap != null ? ` Entry: mcap=${fmtNum(perf.entry_mcap)}, tvl=${fmtNum(perf.entry_tvl)}, vol=${fmtNum(perf.entry_volume)}.` : "";
+      rule = `PREFER: ${perf.pool_name}-type pools (volatility=${perf.volatility}, bin_step=${perf.bin_step}) with strategy="${perf.strategy}" — ${perf.range_efficiency}% in-range efficiency, PnL +${perf.pnl_pct}%.${entryNote}`;
       tags.push("efficient", perf.strategy);
     } else if (outcome === "bad" && perf.close_reason?.includes("volume")) {
       rule = `AVOID: Pools with fee_tvl_ratio=${perf.fee_tvl_ratio} that showed volume collapse — fees evaporated quickly. Minimum sustained volume check needed before deploying.`;
@@ -307,6 +310,12 @@ function derivLesson(perf) {
     range_efficiency: perf.range_efficiency,
     close_reason: perf.close_reason,
     pool: perf.pool,
+    entry_mcap: perf.entry_mcap ?? null,
+    entry_tvl: perf.entry_tvl ?? null,
+    entry_volume: perf.entry_volume ?? null,
+    exit_mcap: perf.exit_mcap ?? null,
+    exit_tvl: perf.exit_tvl ?? null,
+    exit_volume: perf.exit_volume ?? null,
     created_at: new Date().toISOString(),
   };
 }
@@ -334,43 +343,7 @@ export function evolveThresholds(perfData, config) {
   const changes   = {};
   const rationale = {};
 
-  // ── 1. maxVolatility ─────────────────────────────────────────
-  // If losers tend to cluster at higher volatility → tighten the ceiling.
-  // If winners span higher volatility safely → we can loosen a bit.
-  {
-    const winnerVols = winners.map((p) => p.volatility).filter(isFiniteNum);
-    const loserVols  = losers.map((p) => p.volatility).filter(isFiniteNum);
-    const current    = config.screening.maxVolatility;
-
-    if (loserVols.length >= 2) {
-      // 25th percentile of loser volatilities — this is where things start going wrong
-      const loserP25 = percentile(loserVols, 25);
-      if (loserP25 < current) {
-        // Tighten: new ceiling = loserP25 + a small buffer
-        const target  = loserP25 * 1.15;
-        const newVal  = clamp(nudge(current, target, MAX_CHANGE_PER_STEP), 1.0, 20.0);
-        const rounded = Number(newVal.toFixed(1));
-        if (rounded < current) {
-          changes.maxVolatility = rounded;
-          rationale.maxVolatility = `Losers clustered at volatility ~${loserP25.toFixed(1)} — tightened from ${current} → ${rounded}`;
-        }
-      }
-    } else if (winnerVols.length >= 3 && losers.length === 0) {
-      // All winners so far — loosen conservatively so we don't miss good pools
-      const winnerP75 = percentile(winnerVols, 75);
-      if (winnerP75 > current * 1.1) {
-        const target  = winnerP75 * 1.1;
-        const newVal  = clamp(nudge(current, target, MAX_CHANGE_PER_STEP), 1.0, 20.0);
-        const rounded = Number(newVal.toFixed(1));
-        if (rounded > current) {
-          changes.maxVolatility = rounded;
-          rationale.maxVolatility = `All ${winners.length} positions profitable — loosened from ${current} → ${rounded}`;
-        }
-      }
-    }
-  }
-
-  // ── 2. minFeeActiveTvlRatio ─────────────────────────────────────────
+  // ── 1. minFeeActiveTvlRatio ────────────────────────────────────
   // Raise the floor if low-fee pools consistently underperform.
   {
     const winnerFees = winners.map((p) => p.fee_tvl_ratio).filter(isFiniteNum);
@@ -410,7 +383,7 @@ export function evolveThresholds(perfData, config) {
     }
   }
 
-  // ── 3. minOrganic ─────────────────────────────────────────────
+  // ── 2. minOrganic ─────────────────────────────────────────────
   // Raise organic floor if low-organic tokens consistently failed.
   {
     const loserOrganics  = losers.map((p) => p.organic_score).filter(isFiniteNum);
@@ -450,8 +423,7 @@ export function evolveThresholds(perfData, config) {
 
   // Apply to live config object immediately
   const s = config.screening;
-  if (changes.maxVolatility    != null) s.maxVolatility    = changes.maxVolatility;
-  if (changes.minFeeActiveTvlRatio   != null) s.minFeeActiveTvlRatio   = changes.minFeeActiveTvlRatio;
+  if (changes.minFeeActiveTvlRatio != null) s.minFeeActiveTvlRatio = changes.minFeeActiveTvlRatio;
   if (changes.minOrganic       != null) s.minOrganic       = changes.minOrganic;
 
   // Log a lesson summarizing the evolution
@@ -668,8 +640,7 @@ export function getLessonsForPrompt(opts = {}) {
       // Include if: lesson has no role restriction OR matches this role
       const roleOk = !l.role || l.role === agentType || agentType === "GENERAL";
       // Include if: lesson has role-relevant tags OR no tags (general)
-      const lessonTags = Array.isArray(l.tags) ? l.tags : [];
-      const tagOk  = roleTags.length === 0 || !lessonTags.length || lessonTags.some((t) => roleTags.includes(t));
+      const tagOk  = roleTags.length === 0 || !l.tags?.length || l.tags.some((t) => roleTags.includes(t));
       return roleOk && tagOk;
     })
     .sort(byPriority)
@@ -736,7 +707,6 @@ export function getPerformanceHistory({ hours = 24, limit = 50 } = {}) {
       pnl_usd: r.pnl_usd,
       pnl_pct: r.pnl_pct,
       fees_earned_usd: r.fees_earned_usd,
-      fees_earned_sol: r.fees_earned_sol,
       range_efficiency: r.range_efficiency,
       minutes_held: r.minutes_held,
       close_reason: r.close_reason,
@@ -744,22 +714,12 @@ export function getPerformanceHistory({ hours = 24, limit = 50 } = {}) {
     }));
 
   const totalPnl = filtered.reduce((s, r) => s + (r.pnl_usd ?? 0), 0);
-  const totalFeesSol = filtered.reduce((s, r) => s + (r.fees_earned_sol ?? 0), 0);
-  const totalFeesUsd = filtered.reduce((s, r) => s + (r.fees_earned_usd ?? 0), 0);
   const wins = filtered.filter((r) => r.pnl_usd > 0).length;
-  // Solana priority+base fee rough estimate per close (claim + close + auto-swap → ~3 tx).
-  // Calibrated against May 19–21 sample where wallet delta - realized PnL ≈ -$3.40 across 21 closes.
-  const estGasSolPerClose = 0.0015;
-  const estGasSolBurn = filtered.length * estGasSolPerClose;
 
   return {
     hours,
     count: filtered.length,
     total_pnl_usd: Math.round(totalPnl * 100) / 100,
-    total_fees_usd: Math.round(totalFeesUsd * 100) / 100,
-    total_fees_sol: Math.round(totalFeesSol * 1e6) / 1e6,
-    est_gas_sol_burn: Math.round(estGasSolBurn * 1e6) / 1e6,
-    est_gas_per_close_sol: estGasSolPerClose,
     win_rate_pct: filtered.length > 0 ? Math.round((wins / filtered.length) * 100) : null,
     positions: filtered,
   };

@@ -10,8 +10,9 @@
 
 import fs from "fs";
 import { log } from "./logger.js";
+import { repoPath } from "./repo-root.js";
 
-const STATE_FILE = "./state.json";
+const STATE_FILE = repoPath("state.json");
 
 const MAX_RECENT_EVENTS = 20;
 const MAX_INSTRUCTION_LENGTH = 280;
@@ -68,8 +69,10 @@ export function trackPosition({
   organic_score,
   initial_value_usd,
   signal_snapshot = null,
+  entry_mcap = null,
   entry_tvl = null,
-  base_mint = null,
+  entry_volume = null,
+  entry_holders = null,
 }) {
   const state = load();
   state.positions[position] = {
@@ -80,7 +83,6 @@ export function trackPosition({
     bin_range,
     amount_sol,
     amount_x,
-    base_mint,
     active_bin_at_deploy: active_bin,
     bin_step,
     volatility,
@@ -88,7 +90,10 @@ export function trackPosition({
     initial_fee_tvl_24h: fee_tvl_ratio,
     organic_score,
     initial_value_usd,
-    entry_tvl: entry_tvl || null,
+    entry_mcap,
+    entry_tvl,
+    entry_volume,
+    entry_holders,
     signal_snapshot: signal_snapshot || null,
     deployed_at: new Date().toISOString(),
     out_of_range_since: null,
@@ -108,7 +113,6 @@ export function trackPosition({
     confirmed_trailing_exit_reason: null,
     confirmed_trailing_exit_until: null,
     trailing_active: false,
-    pnl_history: [], // rolling samples [{ ts, pnl_pct }] used by flash-dump detector
   };
   pushEvent(state, { action: "deploy", position, pool_name: pool_name || pool });
   save(state);
@@ -180,50 +184,18 @@ function pushEvent(state, event) {
 }
 
 /**
- * Mark a position as closed and remove it from active state.
- * Audit trail preserved via pushEvent → recentEvents.
+ * Mark a position as closed.
  */
 export function recordClose(position_address, reason) {
   const state = load();
   const pos = state.positions[position_address];
   if (!pos) return;
-  const closedAt = new Date().toISOString();
-  pushEvent(state, {
-    action: "close",
-    position: position_address,
-    pool: pos.pool || null,
-    pool_name: pos.pool_name || pos.pool,
-    pair: pos.pair || null,
-    amount_sol: pos.amount_sol ?? null,
-    deployed_at: pos.deployed_at || null,
-    closed_at: closedAt,
-    reason,
-  });
-  delete state.positions[position_address];
+  pos.closed = true;
+  pos.closed_at = new Date().toISOString();
+  pos.notes.push(`Closed at ${pos.closed_at}: ${reason}`);
+  pushEvent(state, { action: "close", position: position_address, pool_name: pos.pool_name || pos.pool, reason });
   save(state);
-  log("state", `Position ${position_address} closed + pruned: ${reason}`);
-}
-
-/**
- * Prune any leftover positions that are marked closed but still sitting
- * in state.positions. Run once at startup to clean up stale entries from
- * before recordClose started deleting.
- */
-export function pruneClosedPositions() {
-  const state = load();
-  const initial = Object.keys(state.positions || {}).length;
-  let removed = 0;
-  for (const [posId, pos] of Object.entries(state.positions || {})) {
-    if (pos?.closed) {
-      delete state.positions[posId];
-      removed++;
-    }
-  }
-  if (removed > 0) {
-    save(state);
-    log("state", `Startup prune: removed ${removed} closed positions (was ${initial}, now ${initial - removed})`);
-  }
-  return { initial, removed, remaining: initial - removed };
+  log("state", `Position ${position_address} marked closed: ${reason}`);
 }
 
 /**
@@ -254,7 +226,7 @@ export function queuePeakConfirmation(position_address, candidatePnlPct, options
     pos.pending_peak_pnl_pct = null;
     pos.pending_peak_started_at = null;
     save(state);
-    log("state", `Position ${position_address} peak PnL accepted at ${candidatePnlPct.toFixed(2)}% from relay poll`);
+    log("state", `Position ${position_address} peak PnL accepted at ${candidatePnlPct.toFixed(2)}% from rpc poll`);
     return true;
   }
 
@@ -407,20 +379,10 @@ export function getStateSummary() {
  * Returns { action, reason } or null if no exit needed.
  */
 export function updatePnlAndCheckExits(position_address, positionData, mgmtConfig) {
-  const { pnl_pct: currentPnlPct, pnl_pct_suspicious, pnl_usd, in_range, fee_per_tvl_24h, current_tvl } = positionData;
+  const { pnl_pct: currentPnlPct, pnl_pct_suspicious, in_range, fee_per_tvl_24h } = positionData;
   const state = load();
   const pos = state.positions[position_address];
   if (!pos || pos.closed) return null;
-
-  // Append rolling PnL sample for flash-dump detection (only when value is trustworthy)
-  if (!pnl_pct_suspicious && currentPnlPct != null) {
-    if (!Array.isArray(pos.pnl_history)) pos.pnl_history = [];
-    const nowMs = Date.now();
-    const windowMin = Math.max(1, Number(mgmtConfig.flashDumpWindowMin ?? 5));
-    const cutoff = nowMs - windowMin * 60 * 1000;
-    pos.pnl_history.push({ ts: nowMs, pnl_pct: currentPnlPct });
-    pos.pnl_history = pos.pnl_history.filter((s) => s.ts >= cutoff).slice(-60);
-  }
 
   if (pos.confirmed_trailing_exit_until) {
     if (new Date(pos.confirmed_trailing_exit_until).getTime() > Date.now() && pos.confirmed_trailing_exit_reason) {
@@ -456,48 +418,22 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
 
   if (changed) save(state);
 
-  // ── Flash dump (rapid PnL drop within rolling window) ─────────
-  if (
-    mgmtConfig.flashDumpEnabled &&
-    !pnl_pct_suspicious &&
-    currentPnlPct != null &&
-    Array.isArray(pos.pnl_history) &&
-    pos.pnl_history.length >= 2
-  ) {
-    const dropPct = Number(mgmtConfig.flashDumpDropPct ?? 5);
-    const windowMin = Math.max(1, Number(mgmtConfig.flashDumpWindowMin ?? 5));
-    const recentMax = pos.pnl_history.reduce((m, s) => (s.pnl_pct > m ? s.pnl_pct : m), -Infinity);
-    const drop = recentMax - currentPnlPct;
-    if (drop >= dropPct) {
-      return {
-        action: "FLASH_DUMP",
-        reason: `Flash dump: PnL ${recentMax.toFixed(2)}% → ${currentPnlPct.toFixed(2)}% (dropped ${drop.toFixed(2)}% within ${windowMin}m)`,
-      };
-    }
-  }
-
   // ── Stop loss ──────────────────────────────────────────────────
-  if (!pnl_pct_suspicious && currentPnlPct != null && mgmtConfig.stopLossPct != null) {
-    if (currentPnlPct <= mgmtConfig.stopLossPct) {
-      return {
-        action: "STOP_LOSS",
-        reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.stopLossPct}%`,
-      };
-    }
+  if (!pnl_pct_suspicious && currentPnlPct != null && mgmtConfig.stopLossPct != null && currentPnlPct <= mgmtConfig.stopLossPct) {
+    return {
+      action: "STOP_LOSS",
+      reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.stopLossPct}%`,
+    };
   }
 
   // ── Trailing TP ────────────────────────────────────────────────
   if (!pnl_pct_suspicious && pos.trailing_active) {
     const dropFromPeak = pos.peak_pnl_pct - currentPnlPct;
     if (dropFromPeak >= mgmtConfig.trailingDropPct) {
-      // Severe drop (≥2x trailingDrop) bypasses confirmation — price is cratering, exit now.
-      // ZINC pattern: peak 3.48% → confirmation 15s delay → final -6.11% (-9.59% drop).
-      const severeDropMultiplier = Number(mgmtConfig.trailingSevereDropMultiplier ?? 2);
-      const isSevere = dropFromPeak >= mgmtConfig.trailingDropPct * severeDropMultiplier;
       return {
         action: "TRAILING_TP",
-        reason: `Trailing TP: peak ${pos.peak_pnl_pct.toFixed(2)}% → current ${currentPnlPct.toFixed(2)}% (dropped ${dropFromPeak.toFixed(2)}% >= ${mgmtConfig.trailingDropPct}%${isSevere ? ", SEVERE — no recheck" : ""})`,
-        needs_confirmation: !isSevere,
+        reason: `Trailing TP: peak ${pos.peak_pnl_pct.toFixed(2)}% → current ${currentPnlPct.toFixed(2)}% (dropped ${dropFromPeak.toFixed(2)}% >= ${mgmtConfig.trailingDropPct}%)`,
+        needs_confirmation: true,
         peak_pnl_pct: pos.peak_pnl_pct,
         current_pnl_pct: currentPnlPct,
         drop_from_peak_pct: dropFromPeak,
@@ -508,77 +444,16 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   // ── Out of range too long ──────────────────────────────────────
   if (pos.out_of_range_since) {
     const minutesOOR = Math.floor((Date.now() - new Date(pos.out_of_range_since).getTime()) / 60000);
-    // Scale OOR wait by volatility — low-vol pools need more time for price to drift back
-    // (today: 4 OOR-20m exits at near-flat PnL; longer wait would let fees compound).
-    const posVol = Number(pos.volatility);
-    const lowVolThresh = Number(mgmtConfig.oorWaitLowVolThreshold ?? 2);
-    const midVolThresh = Number(mgmtConfig.oorWaitMidVolThreshold ?? 3);
-    const lowVolWait = Number(mgmtConfig.oorWaitLowVolMin ?? 40);
-    const midVolWait = Number(mgmtConfig.oorWaitMidVolMin ?? 30);
-    let oorLimit = mgmtConfig.outOfRangeWaitMinutes;
-    if (Number.isFinite(posVol) && posVol > 0) {
-      if (posVol < lowVolThresh) oorLimit = Math.max(oorLimit, lowVolWait);
-      else if (posVol < midVolThresh) oorLimit = Math.max(oorLimit, midVolWait);
-    }
-    if (minutesOOR >= oorLimit) {
-      // Profit-guard: if position is in profit, skip OOR close — let trailing TP / Rule 3 catch the peak.
-      // Prevents killing small winners that drifted out of range (today: MAGA+1.41%, SPCX+0.54% murdered by OOR-20m).
-      const oorProfitGuard = Number(mgmtConfig.oorProfitGuardPct ?? 1);
-      if (
-        oorProfitGuard > 0 &&
-        !pnl_pct_suspicious &&
-        currentPnlPct != null &&
-        currentPnlPct >= oorProfitGuard
-      ) {
-        log("state", `Position ${position_address} OOR ${minutesOOR}m but PnL ${currentPnlPct.toFixed(2)}% >= guard ${oorProfitGuard}% — letting trailer handle exit`);
-      } else {
-        return {
-          action: "OUT_OF_RANGE",
-          reason: `Out of range for ${minutesOOR}m (limit: ${oorLimit}m${oorLimit !== mgmtConfig.outOfRangeWaitMinutes ? `, vol-scaled from ${mgmtConfig.outOfRangeWaitMinutes}m, vol=${posVol}` : ""})`,
-        };
-      }
-    }
-  }
-
-  // ── Time-decay no-fee exit — pool truly dead if TOTAL lifetime fees (claimed + pending) are tiny
-  // Use total_fees_claimed_usd from state + current unclaimed to avoid false triggers when fees
-  // were just claimed moments before the check window expires.
-  const { age_minutes, unclaimed_fees_usd } = positionData;
-  const deadDeployMin = Number(mgmtConfig.deadDeployMinutes ?? 40);
-  const deadDeployMinPnl = Number(mgmtConfig.deadDeployMinPnlPct ?? 0);
-  // Threshold scales with deploy size: $X per SOL deployed (not flat USD).
-  // e.g. 0.5 SOL deploy → threshold $0.05; 5 SOL deploy → $0.50.
-  const deadFeePerSol = Number(mgmtConfig.deadFeePerSol ?? 0.10);
-  const deployedSol = pos.amount_sol || 1;
-  // When solMode=true, fee values are in SOL not USD — use SOL-denominated threshold.
-  // deadFeeSolPerSol: minimum SOL earned per SOL deployed (default 0.001 ≈ $0.15 at $150/SOL)
-  const solMode = mgmtConfig.solMode ?? false;
-  const deadFeeSolPerSol = Number(mgmtConfig.deadFeeSolPerSol ?? 0.001);
-  const deadFeeThreshold = solMode
-    ? deadFeeSolPerSol * deployedSol
-    : deadFeePerSol * deployedSol;
-  const claimedSoFar = pos.total_fees_claimed_usd || 0;
-  const totalFeesEarned = claimedSoFar + (unclaimed_fees_usd ?? 0);
-  if (
-    age_minutes != null &&
-    age_minutes >= deadDeployMin &&
-    totalFeesEarned < deadFeeThreshold
-  ) {
-    if (
-      !pnl_pct_suspicious &&
-      currentPnlPct != null &&
-      currentPnlPct < deadDeployMinPnl
-    ) {
-      log("state", `Position ${position_address} dead-deploy hold: PnL ${currentPnlPct.toFixed(2)}% < ${deadDeployMinPnl}%, total fees $${totalFeesEarned.toFixed(3)} vs threshold $${deadFeeThreshold.toFixed(3)} (${deployedSol} SOL) — waiting for green`);
-    } else {
+    if (minutesOOR >= mgmtConfig.outOfRangeWaitMinutes) {
       return {
-        action: "NO_FEES",
-        reason: `Dead deploy: total fees $${totalFeesEarned.toFixed(3)} (claimed $${claimedSoFar.toFixed(3)} + pending $${(unclaimed_fees_usd ?? 0).toFixed(3)}) < $${deadFeeThreshold.toFixed(3)} (${deadFeePerSol}/SOL × ${deployedSol} SOL) after ${age_minutes}m, PnL ${currentPnlPct != null ? currentPnlPct.toFixed(2) + "%" : "n/a"}`,
+        action: "OUT_OF_RANGE",
+        reason: `Out of range for ${minutesOOR}m (limit: ${mgmtConfig.outOfRangeWaitMinutes}m)`,
       };
     }
   }
 
   // ── Low yield (only after position has had time to accumulate fees) ───
+  const { age_minutes } = positionData;
   const minAgeForYieldCheck = mgmtConfig.minAgeBeforeYieldCheck ?? 60;
   if (
     fee_per_tvl_24h != null &&
@@ -586,34 +461,10 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     fee_per_tvl_24h < mgmtConfig.minFeePerTvl24h &&
     (age_minutes == null || age_minutes >= minAgeForYieldCheck)
   ) {
-    const minCloseAbs = Number(mgmtConfig.minClosePnlUsd ?? 0);
-    if (minCloseAbs > 0 && pnl_usd != null && Math.abs(pnl_usd) < minCloseAbs) {
-      log("state", `Position ${position_address} LOW_YIELD exit deferred: |pnl_usd $${pnl_usd.toFixed(3)}| < min $${minCloseAbs.toFixed(2)}`);
-    } else {
-      return {
-        action: "LOW_YIELD",
-        reason: `Low yield: fee/TVL ${fee_per_tvl_24h.toFixed(2)}% < min ${mgmtConfig.minFeePerTvl24h}% (age: ${age_minutes ?? "?"}m)`,
-      };
-    }
-  }
-
-  // ── Rule 7: Whale exit — TVL collapsed since entry ─────────────
-  const whaleTvlDropPct = mgmtConfig.whaleTvlDropPct;
-  const whaleTvlMinAge = mgmtConfig.whaleTvlMinAgeMinutes ?? 15;
-  if (
-    whaleTvlDropPct != null &&
-    current_tvl != null &&
-    pos.entry_tvl != null &&
-    pos.entry_tvl > 0 &&
-    (age_minutes == null || age_minutes >= whaleTvlMinAge)
-  ) {
-    const tvlDropPct = ((pos.entry_tvl - current_tvl) / pos.entry_tvl) * 100;
-    if (tvlDropPct >= whaleTvlDropPct) {
-      return {
-        action: "WHALE_EXIT",
-        reason: `Rule 7: Whale exit: TVL -${tvlDropPct.toFixed(0)}% since entry ($${pos.entry_tvl.toFixed(0)}→$${current_tvl.toFixed(0)})`,
-      };
-    }
+    return {
+      action: "LOW_YIELD",
+      reason: `Low yield: fee/TVL ${fee_per_tvl_24h.toFixed(2)}% < min ${mgmtConfig.minFeePerTvl24h}% (age: ${age_minutes ?? "?"}m)`,
+    };
   }
 
   return null;
@@ -648,7 +499,6 @@ export function syncOpenPositions(active_addresses) {
   const state = load();
   const activeSet = new Set(active_addresses);
   let changed = false;
-  const autoClosed = [];
 
   for (const posId in state.positions) {
     const pos = state.positions[posId];
@@ -666,9 +516,7 @@ export function syncOpenPositions(active_addresses) {
     pos.notes.push(`Auto-closed during state sync (not found on-chain)`);
     changed = true;
     log("state", `Position ${posId} auto-closed (missing from on-chain data)`);
-    autoClosed.push({ position: posId, ...pos });
   }
 
   if (changed) save(state);
-  return autoClosed;
 }

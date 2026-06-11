@@ -9,7 +9,9 @@ import fs from "fs";
 import { log } from "./logger.js";
 import { config } from "./config.js";
 
-const POOL_MEMORY_FILE = "./pool-memory.json";
+import { repoPath } from "./repo-root.js";
+
+const POOL_MEMORY_FILE = repoPath("pool-memory.json");
 const MAX_NOTE_LENGTH = 280;
 
 function sanitizeStoredNote(text, maxLen = MAX_NOTE_LENGTH) {

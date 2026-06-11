@@ -1,9 +1,10 @@
 import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
+import { REPO_ROOT, repoPath } from "./repo-root.js";
+import { getScreeningDefaultsForTimeframe, normalizeTimeframe, scaleScreeningToTimeframe, TIMEFRAME_SCREENING_SCALES } from "./screening-scales.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
+export { REPO_ROOT, repoPath, getScreeningDefaultsForTimeframe, normalizeTimeframe, scaleScreeningToTimeframe, TIMEFRAME_SCREENING_SCALES };
+
+const USER_CONFIG_PATH = repoPath("user-config.json");
 const DEFAULT_HIVEMIND_URL = "https://api.agentmeridian.xyz";
 const DEFAULT_AGENT_MERIDIAN_API_URL = "https://api.agentmeridian.xyz/api";
 const DEFAULT_AGENT_MERIDIAN_PUBLIC_KEY = "bWVyaWRpYW4taXMtdGhlLWJlc3QtYWdlbnRz";
@@ -12,7 +13,7 @@ const DEFAULT_HIVEMIND_API_KEY = DEFAULT_AGENT_MERIDIAN_PUBLIC_KEY;
 const u = fs.existsSync(USER_CONFIG_PATH)
   ? JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8"))
   : {};
-export const MIN_SAFE_BINS_BELOW = 20;
+export const MIN_SAFE_BINS_BELOW = 35;
 
 function numericConfig(value) {
   const n = Number(value);
@@ -40,8 +41,18 @@ if (u.llmApiKey)  process.env.LLM_API_KEY       ||= u.llmApiKey;
 if (u.dryRun !== undefined) process.env.DRY_RUN ||= String(u.dryRun);
 if (u.publicApiKey) process.env.PUBLIC_API_KEY ||= u.publicApiKey;
 if (u.agentMeridianApiUrl) process.env.AGENT_MERIDIAN_API_URL ||= u.agentMeridianApiUrl;
+if (u.telegramChatId) process.env.TELEGRAM_CHAT_ID ||= String(u.telegramChatId);
 
 const indicatorUserConfig = u.chartIndicators ?? {};
+
+// Optional standalone GMGN config file (mirrors user-config layering)
+const GMGN_CONFIG_PATH = repoPath("gmgn-config.json");
+const gmgnUserConfig = fs.existsSync(GMGN_CONFIG_PATH)
+  ? JSON.parse(fs.readFileSync(GMGN_CONFIG_PATH, "utf8"))
+  : {};
+if (gmgnUserConfig.apiKey || u.gmgnApiKey) {
+  process.env.GMGN_API_KEY ||= gmgnUserConfig.apiKey || u.gmgnApiKey;
+}
 
 function nonEmptyString(...values) {
   for (const value of values) {
@@ -78,27 +89,14 @@ export const config = {
     minTokenFeesSol:   u.minTokenFeesSol   ?? 30,  // global fees paid (priority+jito tips). below = bundled/scam
     useDiscordSignals: u.useDiscordSignals ?? false,
     discordSignalMode: u.discordSignalMode ?? "merge", // merge | only
-    useVolumeTopSource: u.useVolumeTopSource ?? true,  // inject top pools by raw volume (no category bias)
-    useGmgnSource:     u.useGmgnSource     ?? true,   // inject GMGN trending tokens → look up Meteora pools
-    useGeckoSignals:   u.useGeckoSignals   ?? true,    // cross-validate with GeckoTerminal trending/new
-    useBitquerySignals: u.useBitquerySignals ?? true,  // pull fresh pool creations from bitquery-signals.json
-    useHeliusSignals:   u.useHeliusSignals  ?? true,   // pull smart-wallet position-opens from helius-signals.json
     avoidPvpSymbols:   u.avoidPvpSymbols   ?? true, // avoid exact-symbol rivals with real active pools
     blockPvpSymbols:   u.blockPvpSymbols   ?? false, // hard-filter PVP rivals before the LLM sees them
-    maxBundlePct:      u.maxBundlePct      ?? 30,  // max bundle holding % (OKX advanced-info)
     maxBotHoldersPct:  u.maxBotHoldersPct  ?? 30,  // max bot holder addresses % (Jupiter audit)
     maxTop10Pct:       u.maxTop10Pct       ?? 60,  // max top 10 holders concentration
-    maxVolatility:     u.maxVolatility     ?? null, // null = no cap; set e.g. 8 to reject extreme-pump tokens
-    maxRecentPumpPct:  u.maxRecentPumpPct  ?? 30,   // reject pools with pool_price_change_pct > this; wait for cooldown
-    staticRejectCooldownHours: u.staticRejectCooldownHours ?? 24, // mint cooldown when rejected for permanent metric
     allowedLaunchpads: u.allowedLaunchpads ?? [],  // allow-list launchpads, [] = no allow-list
     blockedLaunchpads:  u.blockedLaunchpads  ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
     minTokenAgeHours:   u.minTokenAgeHours   ?? null, // null = no minimum
     maxTokenAgeHours:   u.maxTokenAgeHours   ?? null, // null = no maximum
-    athFilterPct:       u.athFilterPct       ?? null, // e.g. -20 = only deploy if price is >= 20% below ATH
-    minNetBuyers:       u.minNetBuyers       ?? -300, // skip if 1h net_buyers < this (sell-pressure dominant); null = disabled
-    maxSellBuyRatio:    u.maxSellBuyRatio    ?? 3.0,  // skip if 1h sell_vol > this × buy_vol; null = disabled
-    minGmgnFishScore:   u.minGmgnFishScore   ?? 0,   // min GMGN global fish score (0 = disabled); Evil Panda: 30
   },
 
   // ─── Position Management ────────────────
@@ -110,42 +108,17 @@ export const config = {
     oorCooldownTriggerCount: u.oorCooldownTriggerCount ?? 3,
     oorCooldownHours:       u.oorCooldownHours       ?? 12,
     repeatDeployCooldownEnabled: u.repeatDeployCooldownEnabled ?? true,
-    repeatDeployCooldownTriggerCount: u.repeatDeployCooldownTriggerCount ?? 2,
-    repeatDeployCooldownHours: u.repeatDeployCooldownHours ?? 24,
+    repeatDeployCooldownTriggerCount: u.repeatDeployCooldownTriggerCount ?? 3,
+    repeatDeployCooldownHours: u.repeatDeployCooldownHours ?? 12,
     repeatDeployCooldownScope: u.repeatDeployCooldownScope ?? "token", // pool | token | both
     repeatDeployCooldownMinFeeEarnedPct: u.repeatDeployCooldownMinFeeEarnedPct ?? u.repeatDeployCooldownMinFeeYieldPct ?? 0,
-    bigLossBlacklistPct:    u.bigLossBlacklistPct    ?? -10,  // pnl_pct threshold to trigger extended mint cooldown
-    bigLossBlacklistHours:  u.bigLossBlacklistHours  ?? 24,   // duration of extended mint cooldown after big loss
     // Screener: skip pool if closed within this many hours (any close reason)
     recentDeployCooldownHours: u.recentDeployCooldownHours ?? 2,
-    // Volatility-whipsaw guard: reject deploy when pool had N cooldowns within window
-    recentVolBlockWindowHours: u.recentVolBlockWindowHours ?? 4,
-    recentVolBlockMaxCount:    u.recentVolBlockMaxCount    ?? 2,
-    // Smart-wallet gate
-    requireSmartWalletSignal:  u.requireSmartWalletSignal  ?? false,
-    smartWalletReducedDeploySol: u.smartWalletReducedDeploySol ?? 0.5,
-    smartWalletSignalVolThreshold: u.smartWalletSignalVolThreshold ?? 2.0,
-    // Dynamic OOR wait scaling by volatility
-    oorWaitLowVolMin:    u.oorWaitLowVolMin    ?? 40,
-    oorWaitMidVolMin:    u.oorWaitMidVolMin    ?? 30,
-    oorWaitLowVolThreshold: u.oorWaitLowVolThreshold ?? 2,
-    oorWaitMidVolThreshold: u.oorWaitMidVolThreshold ?? 3,
-    // OOR profit-guard: skip OOR close when PnL above this (let trailer handle peak)
-    oorProfitGuardPct: u.oorProfitGuardPct ?? 1,
     minVolumeToRebalance:  u.minVolumeToRebalance  ?? 1000,
-    stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -15,
+    stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -50,
     takeProfitPct:         u.takeProfitPct         ?? u.takeProfitFeePct ?? 5,
     minFeePerTvl24h:       u.minFeePerTvl24h       ?? 7,
     minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 60, // minutes before low yield can trigger close
-    minClosePnlUsd:        u.minClosePnlUsd        ?? 0.20,  // gate LOW_YIELD close when |pnl_usd| below this
-    timeStopHours:         u.timeStopHours         ?? 5,    // Rule 6: close after this many hours if underwater
-    timeStopUnderwaterPct: u.timeStopUnderwaterPct ?? -5,   // Rule 6: pnl_pct threshold for stale + underwater close
-    whaleTvlDropPct:       u.whaleTvlDropPct       ?? 35,   // Rule 7: close if pool TVL drops this % since entry (whale exit)
-    whaleTvlMinAgeMinutes: u.whaleTvlMinAgeMinutes ?? 15,   // Rule 7: min position age before whale check fires
-    deadDeployMinutes:     u.deadDeployMinutes     ?? 40,   // dead-deploy age threshold
-    deadDeployMinPnlPct:   u.deadDeployMinPnlPct   ?? 0,    // require PnL >= this to close dead deploy; otherwise wait for green
-    deadFeePerSol:         u.deadFeePerSol         ?? 0.10, // dead-deploy fee threshold: $X per SOL deployed (USD mode)
-    deadFeeSolPerSol:      u.deadFeeSolPerSol      ?? 0.001, // dead-deploy fee threshold: SOL per SOL deployed (solMode=true)
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,
@@ -154,12 +127,7 @@ export const config = {
     trailingTakeProfit:    u.trailingTakeProfit    ?? true,
     trailingTriggerPct:    u.trailingTriggerPct    ?? 3,    // activate trailing at X% PnL
     trailingDropPct:       u.trailingDropPct       ?? 1.5,  // close when drops X% from peak
-    trailingSevereDropMultiplier: u.trailingSevereDropMultiplier ?? 2, // bypass confirmation when drop >= trailingDrop × this
     pnlSanityMaxDiffPct:   u.pnlSanityMaxDiffPct   ?? 5,    // max allowed diff between reported and derived pnl % before ignoring a tick
-    // Flash dump detector — force-close on rapid PnL drop within short window
-    flashDumpEnabled:      u.flashDumpEnabled      ?? true,
-    flashDumpDropPct:      u.flashDumpDropPct      ?? 5,    // PnL drop ≥ this within window triggers close
-    flashDumpWindowMin:    u.flashDumpWindowMin    ?? 5,    // rolling window in minutes
     // SOL mode — positions, PnL, and balances reported in SOL instead of USD
     solMode:               u.solMode               ?? false,
   },
@@ -170,7 +138,6 @@ export const config = {
     minBinsBelow: strategyMinBinsBelow,
     maxBinsBelow: strategyMaxBinsBelow,
     defaultBinsBelow: strategyDefaultBinsBelow,
-    highVolBinsBelowThreshold: u.highVolBinsBelowThreshold ?? 3.5,
   },
 
   // ─── Scheduling ─────────────────────────
@@ -185,14 +152,9 @@ export const config = {
     temperature: u.temperature ?? 0.373,
     maxTokens:   u.maxTokens   ?? 4096,
     maxSteps:    u.maxSteps    ?? 20,
-    managementModel: u.managementModel ?? process.env.LLM_MODEL ?? "mimo-v2.5-pro",
-    screeningModel:  u.screeningModel  ?? process.env.LLM_MODEL ?? "mimo-v2.5-pro",
-    generalModel:    u.generalModel    ?? process.env.LLM_MODEL ?? "mimo-v2.5-pro",
-  },
-
-  // ─── Auto-evolution (lessons.js threshold tuning) ───────
-  evolution: {
-    autoEvolveEnabled: u.autoEvolveEnabled ?? true, // set false to freeze maxVolatility / minFeeActiveTvlRatio / minOrganic
+    managementModel: u.managementModel ?? process.env.LLM_MODEL ?? "openrouter/healer-alpha",
+    screeningModel:  u.screeningModel  ?? process.env.LLM_MODEL ?? "openrouter/hunter-alpha",
+    generalModel:    u.generalModel    ?? process.env.LLM_MODEL ?? "openrouter/healer-alpha",
   },
 
   // ─── Darwinian Signal Weighting ───────
@@ -226,6 +188,27 @@ export const config = {
     url: nonEmptyString(u.agentMeridianApiUrl, process.env.AGENT_MERIDIAN_API_URL, DEFAULT_AGENT_MERIDIAN_API_URL),
     publicApiKey: nonEmptyString(u.publicApiKey, process.env.PUBLIC_API_KEY, DEFAULT_AGENT_MERIDIAN_PUBLIC_KEY),
     lpAgentRelayEnabled: u.lpAgentRelayEnabled ?? false,
+  },
+
+  // ─── PnL fetcher / poller (public infra: RPC + Meteora deposits + Jupiter) ──
+  pnl: {
+    // Live position value comes from on-chain reads on this RPC.
+    // Defaults to the public pump.helius endpoint so the aggressive poller
+    // never burns the main RPC_URL or the LPAgent sponsor budget.
+    rpcUrl: nonEmptyString(u.pnlRpcUrl, process.env.PNL_RPC_URL, "https://pump.helius-rpc.com"),
+    source: nonEmptyString(u.pnlSource, "rpc"), // rpc | meteora (fallback-only)
+    pollIntervalSec: Number(u.pnlPollIntervalSec ?? 3),
+    depositCacheTtlSec: Number(u.pnlDepositCacheTtlSec ?? 300),
+  },
+
+  // ─── GMGN (fee source for minTokenFeesSol gate) ──────────────
+  gmgn: {
+    apiKey: nonEmptyString(gmgnUserConfig.apiKey, u.gmgnApiKey, process.env.GMGN_API_KEY),
+    baseUrl: nonEmptyString(gmgnUserConfig.baseUrl, u.gmgnBaseUrl, "https://openapi.gmgn.ai"),
+    requestDelayMs: Number(gmgnUserConfig.requestDelayMs ?? u.gmgnRequestDelayMs ?? 2500),
+    maxRetries: Number(gmgnUserConfig.maxRetries ?? u.gmgnMaxRetries ?? 2),
+    // gmgn = use GMGN total_fee for global_fees_sol; jupiter = legacy Jupiter fees
+    feeSource: nonEmptyString(gmgnUserConfig.feeSource, u.gmgnFeeSource, "gmgn"),
   },
 
   jupiter: {
@@ -290,8 +273,6 @@ export function reloadScreeningThresholds() {
     if (fresh.minFeeActiveTvlRatio != null) s.minFeeActiveTvlRatio = fresh.minFeeActiveTvlRatio;
     if (fresh.minTokenFeesSol  != null) s.minTokenFeesSol  = fresh.minTokenFeesSol;
     if (fresh.maxTop10Pct      != null) s.maxTop10Pct      = fresh.maxTop10Pct;
-    if (fresh.useVolumeTopSource !== undefined) s.useVolumeTopSource = fresh.useVolumeTopSource;
-    if (fresh.useGmgnSource     !== undefined) s.useGmgnSource     = fresh.useGmgnSource;
     if (fresh.useDiscordSignals !== undefined) s.useDiscordSignals = fresh.useDiscordSignals;
     if (fresh.discordSignalMode != null) s.discordSignalMode = fresh.discordSignalMode;
     if (fresh.excludeHighSupplyConcentration !== undefined) s.excludeHighSupplyConcentration = fresh.excludeHighSupplyConcentration;
@@ -309,17 +290,11 @@ export function reloadScreeningThresholds() {
     if (fresh.category          != null) s.category          = fresh.category;
     if (fresh.minTokenAgeHours  !== undefined) s.minTokenAgeHours = fresh.minTokenAgeHours;
     if (fresh.maxTokenAgeHours  !== undefined) s.maxTokenAgeHours = fresh.maxTokenAgeHours;
-    if (fresh.athFilterPct      !== undefined) s.athFilterPct     = fresh.athFilterPct;
-    if (fresh.maxBundlePct      != null) s.maxBundlePct     = fresh.maxBundlePct;
     if (fresh.avoidPvpSymbols   !== undefined) s.avoidPvpSymbols = fresh.avoidPvpSymbols;
     if (fresh.blockPvpSymbols   !== undefined) s.blockPvpSymbols = fresh.blockPvpSymbols;
     if (fresh.maxBotHoldersPct  != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct;
-    if (fresh.maxVolatility     !== undefined) s.maxVolatility = fresh.maxVolatility;
     if (fresh.allowedLaunchpads !== undefined) s.allowedLaunchpads = fresh.allowedLaunchpads;
     if (fresh.blockedLaunchpads !== undefined) s.blockedLaunchpads = fresh.blockedLaunchpads;
-    if (fresh.minNetBuyers    !== undefined) s.minNetBuyers    = fresh.minNetBuyers;
-    if (fresh.maxSellBuyRatio !== undefined) s.maxSellBuyRatio = fresh.maxSellBuyRatio;
-    if (fresh.minGmgnFishScore !== undefined) s.minGmgnFishScore = fresh.minGmgnFishScore;
     const minBinsBelow = numericConfig(fresh.minBinsBelow) ?? config.strategy.minBinsBelow;
     const maxBinsBelow = numericConfig(fresh.maxBinsBelow) ?? numericConfig(fresh.binsBelow) ?? config.strategy.maxBinsBelow;
     const defaultBinsBelow = numericConfig(fresh.defaultBinsBelow) ?? numericConfig(fresh.binsBelow) ?? config.strategy.defaultBinsBelow ?? maxBinsBelow;

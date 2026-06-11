@@ -3,11 +3,8 @@ import { isBlacklisted } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown, isRecentlyDeployed } from "../pool-memory.js";
-import { recordSkip } from "../skip-tracker.js";
 import { confirmIndicatorPreset } from "./chart-indicators.js";
-import { getVolumeSignal } from "./dexscreener.js";
 import { getAgentMeridianBase, getAgentMeridianHeaders } from "./agent-meridian.js";
-import { getGeckoSignalMap } from "./gecko.js";
 
 const DATAPI_JUP = "https://datapi.jup.ag/v1";
 
@@ -37,18 +34,7 @@ function scoreCandidate(pool) {
   const organic = Number(pool.organic_score || 0);
   const volume = Number(pool.volume_window || 0);
   const holders = Number(pool.holders || 0);
-  const base = feeTvl * 1000 + organic * 10 + volume / 100 + holders / 100;
-  // Cross-validation boost: pool appearing in GeckoTerminal trending/new is a 2nd-source signal
-  const geckoBoost = pool.gecko_signal === "both" ? 200 : pool.gecko_signal ? 100 : 0;
-  // Bitquery boost: fresh pool detected at creation = first-mover edge
-  const bitqueryBoost = pool.bitquery_signal ? 150 : 0;
-  // Helius boost: smart wallet opened a position here — strongest signal. Scales with signer count.
-  const heliusBoost = pool.helius_signal ? 300 + (Array.isArray(pool.helius_signers) ? pool.helius_signers.length * 50 : 0) : 0;
-  // Volume-top boost: appeared in top pools by raw volume — high activity regardless of trending algo
-  const volumeTopBoost = pool.volume_top_signal ? 75 : 0;
-  // GMGN trending: token appearing in GMGN market rank = strong buy-side momentum signal
-  const gmgnBoost = pool.gmgn_signal ? 125 : 0;
-  return base + geckoBoost + bitqueryBoost + heliusBoost + volumeTopBoost + gmgnBoost;
+  return feeTvl * 1000 + organic * 10 + volume / 100 + holders / 100;
 }
 
 function numeric(value) {
@@ -115,9 +101,6 @@ function getRawPoolScreeningRejectReason(pool, s) {
   if (pool?.quote_token_has_critical_warnings === true) return "quote token has critical warnings";
   if (pool?.base_token_has_high_single_ownership === true) return "base token has high single ownership";
   if (pool?.pool_type && pool.pool_type !== "dlmm") return `pool_type ${pool.pool_type} is not dlmm`;
-  const quoteAddress = quote?.address;
-  const SOL_MINT = "So11111111111111111111111111111111111111112";
-  if (quoteAddress && quoteAddress !== SOL_MINT) return `quote token is not SOL (${quoteAddress?.slice(0, 8)}) — only SOL-paired pools supported`;
 
   if (mcap == null || mcap < s.minMcap) return `mcap ${mcap ?? "unknown"} below minMcap ${s.minMcap}`;
   if (mcap > s.maxMcap) return `mcap ${mcap} above maxMcap ${s.maxMcap}`;
@@ -127,24 +110,11 @@ function getRawPoolScreeningRejectReason(pool, s) {
   if (s.maxTvl != null && tvl > s.maxTvl) return `TVL ${tvl} above maxTvl ${s.maxTvl}`;
   if (binStep == null || binStep < s.minBinStep) return `bin_step ${binStep ?? "unknown"} below minBinStep ${s.minBinStep}`;
   if (binStep > s.maxBinStep) return `bin_step ${binStep} above maxBinStep ${s.maxBinStep}`;
-  // Config is in percent (0.5 = 0.5%); raw API value is decimal (0.005 = 0.5%). Convert.
-  if (feeActiveTvlRatio == null || feeActiveTvlRatio < s.minFeeActiveTvlRatio / 100) {
-    return `fee/active-TVL ${feeActiveTvlRatio ?? "unknown"} below minFeeActiveTvlRatio ${s.minFeeActiveTvlRatio}%`;
+  if (feeActiveTvlRatio == null || feeActiveTvlRatio < s.minFeeActiveTvlRatio) {
+    return `fee/active-TVL ${feeActiveTvlRatio ?? "unknown"} below minFeeActiveTvlRatio ${s.minFeeActiveTvlRatio}`;
   }
   if (!isUsableVolatility(volatility)) {
     return `volatility ${volatility ?? "unknown"} is unusable`;
-  }
-  // Momentum-wait gate: skip pools that just pumped hard (no point deploying buy-the-dip
-  // while price keeps ripping — will OOR upward immediately). Wait for consolidation.
-  const recentPriceChange = numeric(pool?.pool_price_change_pct);
-  if (
-    s.maxRecentPumpPct != null &&
-    Number.isFinite(s.maxRecentPumpPct) &&
-    s.maxRecentPumpPct > 0 &&
-    recentPriceChange != null &&
-    recentPriceChange > s.maxRecentPumpPct
-  ) {
-    return `recent pump +${recentPriceChange.toFixed(1)}% > maxRecentPumpPct ${s.maxRecentPumpPct}%. Wait for consolidation.`;
   }
   if (baseOrganic == null || baseOrganic < s.minOrganic) {
     return `base organic ${baseOrganic ?? "unknown"} below minOrganic ${s.minOrganic}`;
@@ -184,69 +154,6 @@ async function fetchDiscordSignalCandidates() {
   return Array.isArray(data?.candidates) ? data.candidates : [];
 }
 
-async function fetchHeliusSignalCandidates({ maxAgeMinutes = 30, limit = 20 } = {}) {
-  const fs = await import("fs");
-  const path = await import("path");
-  const { fileURLToPath } = await import("url");
-  const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../helius-signals.json");
-  if (!fs.existsSync(file)) return [];
-
-  let signals;
-  try { signals = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return []; }
-  if (!Array.isArray(signals)) return [];
-
-  const cutoff = Date.now() - maxAgeMinutes * 60_000;
-  const recent = signals
-    .filter((s) => Array.isArray(s?.candidate_pool_addresses) && new Date(s.queued_at).getTime() >= cutoff)
-    .slice(0, limit);
-  if (recent.length === 0) return [];
-
-  // Aggregate: for each candidate pool address, collect signers that touched it
-  const byAddress = new Map();
-  for (const s of recent) {
-    for (const addr of s.candidate_pool_addresses) {
-      if (!addr) continue;
-      const entry = byAddress.get(addr) || { signers: new Set(), latestAt: 0 };
-      entry.signers.add(s.signer);
-      entry.latestAt = Math.max(entry.latestAt, new Date(s.queued_at).getTime());
-      byAddress.set(addr, entry);
-    }
-  }
-  return Array.from(byAddress.entries()).map(([address, info]) => ({
-    address,
-    signers: Array.from(info.signers),
-    latest_at: new Date(info.latestAt).toISOString(),
-  }));
-}
-
-async function fetchBitquerySignalCandidates({ maxAgeMinutes = 60, limit = 10 } = {}) {
-  const fs = await import("fs");
-  const path = await import("path");
-  const { fileURLToPath } = await import("url");
-  const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../bitquery-signals.json");
-  if (!fs.existsSync(file)) return [];
-
-  let signals;
-  try { signals = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return []; }
-  if (!Array.isArray(signals)) return [];
-
-  const cutoff = Date.now() - maxAgeMinutes * 60_000;
-  const recent = signals
-    .filter((s) => s?.pool_address && s.status !== "consumed" && new Date(s.queued_at).getTime() >= cutoff)
-    .slice(0, limit);
-  if (recent.length === 0) return [];
-
-  const details = await Promise.allSettled(
-    recent.map((s) => fetchPoolDiscoveryDetail({ poolAddress: s.pool_address, timeframe: config.screening.timeframe }))
-  );
-
-  return recent.map((s, i) => {
-    const detail = details[i].status === "fulfilled" ? details[i].value : null;
-    if (!detail) return null;
-    return { signal: s, discovery_pool: detail };
-  }).filter(Boolean);
-}
-
 async function fetchPoolDiscoveryPage({ page_size, filters, timeframe, category }) {
   const url = `${POOL_DISCOVERY_BASE}/pools?` +
     `page_size=${page_size}` +
@@ -254,59 +161,12 @@ async function fetchPoolDiscoveryPage({ page_size, filters, timeframe, category 
     `&timeframe=${timeframe}` +
     `&category=${category}`;
 
-  log("screening", `API call [${category}/${timeframe}]: ${decodeURIComponent(url.split("filter_by=")[1]?.split("&")[0] ?? "").replace(/&&/g, " | ")}`);
   const res = await fetch(url);
 
   if (!res.ok) {
     throw new Error(`Pool Discovery API error: ${res.status} ${res.statusText}`);
   }
 
-  return res.json();
-}
-
-async function fetchGmgnTrending({ interval = "1h", limit = 50 } = {}) {
-  const apiKey = process.env.GMGN_API_KEY;
-  if (!apiKey) return [];
-  const timestamp = Math.floor(Date.now() / 1000);
-  const clientId = `${timestamp}-${Math.random().toString(36).slice(2, 10)}`;
-  const url = `https://openapi.gmgn.ai/v1/market/rank?chain=sol&interval=${interval}&limit=${limit}&timestamp=${timestamp}&client_id=${encodeURIComponent(clientId)}`;
-  const res = await fetch(url, { headers: { "X-APIKEY": apiKey, "Content-Type": "application/json" } });
-  if (!res.ok) throw new Error(`GMGN market/rank ${res.status}`);
-  const data = await res.json();
-  if (String(data.code) !== "0") throw new Error(`GMGN error: ${data.error || data.message}`);
-  // Response: { code:0, data: { code:0, data: { rank: [...] } } }
-  const rank = data?.data?.data?.rank ?? data?.data?.rank ?? data?.data;
-  return Array.isArray(rank) ? rank : [];
-}
-
-async function fetchBestPoolForMint(mint, timeframe) {
-  const url = `https://dlmm.datapi.meteora.ag/pools?query=${encodeURIComponent(mint)}&sort_by=${encodeURIComponent("tvl:desc")}&filter_by=${encodeURIComponent("pool_type=dlmm")}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`pool search by mint ${res.status}`);
-  const data = await res.json();
-  const pools = Array.isArray(data?.data) ? data.data : [];
-  const best = pools.find((p) => p?.token_x?.address === mint);
-  if (!best?.pool_address) return null;
-  return fetchPoolDiscoveryDetail({ poolAddress: best.pool_address, timeframe });
-}
-
-async function fetchPoolDiscoveryByVolume({ page_size, timeframe, s }) {
-  const filters = [
-    "pool_type=dlmm",
-    `tvl>=${s.minTvl}`,
-    `dlmm_bin_step>=${s.minBinStep}`,
-    `dlmm_bin_step<=${s.maxBinStep}`,
-  ].filter(Boolean).join("&&");
-
-  const url = `${POOL_DISCOVERY_BASE}/pools?` +
-    `page_size=${page_size}` +
-    `&filter_by=${encodeURIComponent(filters)}` +
-    `&timeframe=${timeframe}` +
-    `&sort_by=${encodeURIComponent("volume:desc")}`;
-
-  log("screening", `API call [volume-top/${timeframe}]: tvl>=${s.minTvl} bin_step ${s.minBinStep}-${s.maxBinStep}`);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Pool Discovery volume-top error: ${res.status} ${res.statusText}`);
   return res.json();
 }
 
@@ -519,13 +379,14 @@ async function refreshDiscordOnlyPools(pools, timeframe) {
  * Returns condensed data optimized for LLM consumption (saves tokens).
  */
 export async function discoverPools({
-  page_size = 100,
+  page_size = 50,
 } = {}) {
   const s = config.screening;
   const filters = [
-    // Warning flags intentionally excluded from API filter: new pools return undefined (not false)
-    // for these fields. API treats undefined != false → silently drops valid new pools.
-    // Local getRawPoolScreeningRejectReason checks === true, so actual bad pools still get rejected.
+    "base_token_has_critical_warnings=false",
+    "quote_token_has_critical_warnings=false",
+    s.excludeHighSupplyConcentration ? "base_token_has_high_supply_concentration=false" : null,
+    "base_token_has_high_single_ownership=false",
     "pool_type=dlmm",
     `base_token_market_cap>=${s.minMcap}`,
     `base_token_market_cap<=${s.maxMcap}`,
@@ -535,7 +396,7 @@ export async function discoverPools({
     s.maxTvl != null ? `tvl<=${s.maxTvl}` : null,
     `dlmm_bin_step>=${s.minBinStep}`,
     `dlmm_bin_step<=${s.maxBinStep}`,
-    `fee_active_tvl_ratio>=${s.minFeeActiveTvlRatio / 100}`,
+    `fee_active_tvl_ratio>=${s.minFeeActiveTvlRatio}`,
     `base_token_organic_score>=${s.minOrganic}`,
     `quote_token_organic_score>=${s.minQuoteOrganic}`,
     s.minTokenAgeHours != null ? `base_token_created_at<=${Date.now() - s.minTokenAgeHours * 3_600_000}` : null,
@@ -545,34 +406,14 @@ export async function discoverPools({
       : null,
   ].filter(Boolean).join("&&");
 
-  const categories = s.category === "trending+new"
-    ? ["trending", "new"]
-    : [s.category || "trending"];
+  const data = await fetchPoolDiscoveryPage({
+    page_size,
+    filters,
+    timeframe: s.timeframe,
+    category: s.category,
+  });
 
-  const categoryResults = await Promise.allSettled(
-    categories.map((cat) => fetchPoolDiscoveryPage({ page_size, filters, timeframe: s.timeframe, category: cat }))
-  );
-
-  const seenAddresses = new Set();
-  let rawPools = [];
-  for (let i = 0; i < categoryResults.length; i++) {
-    const result = categoryResults[i];
-    if (result.status !== "fulfilled") {
-      log("screening", `Category [${categories[i]}] failed: ${result.reason?.message || "unknown"}`);
-      continue;
-    }
-    const returned = result.value?.data?.length ?? 0;
-    const total = result.value?.total ?? 0;
-    log("screening", `Category [${categories[i]}]: ${returned} returned (API total matching filters: ${total})`);
-    for (const pool of (result.value?.data || [])) {
-      const addr = pool?.pool_address;
-      if (addr && !seenAddresses.has(addr)) {
-        seenAddresses.add(addr);
-        rawPools.push(pool);
-      }
-    }
-  }
-  log("screening", `Fetched ${rawPools.length} unique pools from [${categories.join("+")}]`);
+  let rawPools = Array.isArray(data.data) ? data.data : [];
 
   if (config.screening.useDiscordSignals) {
     const signalCandidates = await fetchDiscordSignalCandidates().catch((error) => {
@@ -625,206 +466,8 @@ export async function discoverPools({
     }
   }
 
-  if (config.screening.useHeliusSignals !== false) {
-    const heliusSignals = await fetchHeliusSignalCandidates().catch((error) => {
-      log("screening", `Helius signal fetch failed: ${error.message}`);
-      return [];
-    });
-    if (heliusSignals.length > 0) {
-      const byPool = new Map(rawPools.map((p) => [p.pool_address, p]));
-      const unmatched = [];
-      let tagged = 0;
-      for (const sig of heliusSignals) {
-        if (byPool.has(sig.address)) {
-          Object.assign(byPool.get(sig.address), {
-            helius_signal: true,
-            helius_signers: sig.signers,
-            helius_signal_at: sig.latest_at,
-          });
-          tagged++;
-        } else {
-          unmatched.push(sig);
-        }
-      }
-      if (unmatched.length > 0) {
-        const details = await Promise.allSettled(
-          unmatched.map((sig) => fetchPoolDiscoveryDetail({ poolAddress: sig.address, timeframe: s.timeframe }))
-        );
-        let injected = 0;
-        for (let i = 0; i < unmatched.length; i++) {
-          const detail = details[i].status === "fulfilled" ? details[i].value : null;
-          if (!detail?.pool_address) continue;
-          if (s.maxTokenAgeHours != null && detail.base_token_created_at != null) {
-            const ageH = (Date.now() - detail.base_token_created_at) / 3_600_000;
-            if (ageH > s.maxTokenAgeHours) {
-              log("screening", `Helius inject skip: ${detail.name || detail.pool_address?.slice(0, 8)} — age ${Math.round(ageH)}h > maxTokenAgeHours ${s.maxTokenAgeHours}`);
-              continue;
-            }
-          }
-          if (s.minFeeActiveTvlRatio != null && detail.fee_active_tvl_ratio != null) {
-            // Config is in percent (0.5 = 0.5%); raw API value is decimal. Convert config / 100.
-            if (detail.fee_active_tvl_ratio < s.minFeeActiveTvlRatio / 100) {
-              log("screening", `Helius inject skip: ${detail.name || detail.pool_address?.slice(0, 8)} — fee/TVL ${(detail.fee_active_tvl_ratio * 100).toFixed(4)}% < min ${s.minFeeActiveTvlRatio}%`);
-              continue;
-            }
-          }
-          byPool.set(detail.pool_address, {
-            ...detail,
-            helius_signal: true,
-            helius_signers: unmatched[i].signers,
-            helius_signal_at: unmatched[i].latest_at,
-          });
-          injected++;
-        }
-        if (injected > 0) log("screening", `Helius: injected ${injected} smart-wallet pool(s) not in trending`);
-      }
-      rawPools = Array.from(byPool.values());
-      if (tagged > 0) log("screening", `Helius: ${tagged} trending pool(s) also touched by smart wallets`);
-    }
-  }
-
-  if (config.screening.useBitquerySignals !== false) {
-    const bitquerySignals = await fetchBitquerySignalCandidates().catch((error) => {
-      log("screening", `Bitquery signal fetch failed: ${error.message}`);
-      return [];
-    });
-    if (bitquerySignals.length > 0) {
-      const byPool = new Map(rawPools.map((p) => [p.pool_address, p]));
-      let added = 0;
-      for (const { signal, discovery_pool } of bitquerySignals) {
-        const enriched = {
-          ...discovery_pool,
-          bitquery_signal: true,
-          bitquery_signal_at: signal.queued_at,
-          bitquery_signer: signal.signer || null,
-        };
-        if (byPool.has(discovery_pool.pool_address)) {
-          Object.assign(byPool.get(discovery_pool.pool_address), {
-            bitquery_signal: true,
-            bitquery_signal_at: signal.queued_at,
-            bitquery_signer: signal.signer || null,
-          });
-        } else {
-          byPool.set(discovery_pool.pool_address, enriched);
-          added++;
-        }
-      }
-      rawPools = Array.from(byPool.values());
-      if (added > 0) log("screening", `Bitquery: added ${added} fresh pool(s) not in trending list`);
-    }
-  }
-
   rawPools = await applyVolatilityTimeframe(rawPools, s.timeframe);
   await enrichDiscordSignalLaunchpads(rawPools);
-
-  if (config.screening.useGeckoSignals !== false) {
-    try {
-      const geckoMap = await getGeckoSignalMap();
-      let tagged = 0;
-      for (const pool of rawPools) {
-        const signal = geckoMap.get(pool?.pool_address);
-        if (signal) {
-          pool.gecko_signal = signal;
-          tagged++;
-        }
-      }
-      if (tagged > 0) log("screening", `Gecko cross-validation: ${tagged} pool(s) also trending/new on GeckoTerminal`);
-    } catch (error) {
-      log("screening", `Gecko signal fetch failed: ${error.message}`);
-    }
-  }
-
-  if (config.screening.useVolumeTopSource !== false) {
-    try {
-      const vtResult = await fetchPoolDiscoveryByVolume({ page_size: 30, timeframe: s.timeframe, s });
-      const vtPools = vtResult?.data || [];
-      if (vtPools.length > 0) {
-        const byPool = new Map(rawPools.map((p) => [p.pool_address, p]));
-        let injected = 0;
-        let tagged = 0;
-        for (const pool of vtPools) {
-          if (!pool?.pool_address) continue;
-          if (byPool.has(pool.pool_address)) {
-            byPool.get(pool.pool_address).volume_top_signal = true;
-            tagged++;
-          } else {
-            byPool.set(pool.pool_address, { ...pool, volume_top_signal: true });
-            injected++;
-          }
-        }
-        rawPools = Array.from(byPool.values());
-        if (injected > 0) log("screening", `Volume-top: injected ${injected} high-volume pool(s) not in trending/new`);
-        if (tagged > 0) log("screening", `Volume-top: ${tagged} trending pool(s) also in volume-top`);
-      }
-    } catch (error) {
-      log("screening", `Volume-top source fetch failed: ${error.message}`);
-    }
-  }
-
-  if (config.screening.useGmgnSource !== false && process.env.GMGN_API_KEY) {
-    try {
-      const gmgnTokens = await fetchGmgnTrending({ interval: "1h", limit: 50 });
-      log("screening", `GMGN: fetched ${gmgnTokens.length} trending token(s)`);
-      if (gmgnTokens.length > 0) {
-        const minFish = Number(config.screening.minGmgnFishScore ?? 0);
-        const getGmgnFishScore = (t) => {
-          const val = t?.fish_percent ?? t?.global_fish_percent ?? t?.fishPercent ?? t?.global_fish ?? null;
-          return val != null ? Number(val) : null;
-        };
-        const gmgnPassesFilter = (t) => {
-          if (!minFish || minFish <= 0) return true;
-          const score = getGmgnFishScore(t);
-          return score == null || score >= minFish;
-        };
-        const passedTokens = gmgnTokens.filter(gmgnPassesFilter);
-        const fishSkipped = gmgnTokens.length - passedTokens.length;
-        if (fishSkipped > 0) log("screening", `GMGN: filtered ${fishSkipped} token(s) with global fish score < ${minFish}`);
-
-        const byPool = new Map(rawPools.map((p) => [p.pool_address, p]));
-        const byMint = new Map(rawPools.map((p) => [getPoolBaseMint(p), p]).filter(([m]) => m));
-
-        // Tag existing pools whose base token is trending on GMGN (only if fish score passes)
-        const gmgnMints = new Set(passedTokens.map((t) => t?.address).filter(Boolean));
-        let autoTagged = 0;
-        for (const pool of rawPools) {
-          if (!pool.gmgn_signal && gmgnMints.has(getPoolBaseMint(pool))) {
-            pool.gmgn_signal = true;
-            autoTagged++;
-          }
-        }
-        if (autoTagged > 0) log("screening", `GMGN: tagged ${autoTagged} existing pool(s) with gmgn_signal`);
-
-        // For tokens not yet in our pool list, look up their best Meteora pool and inject
-        const newTokens = passedTokens
-          .filter((t) => t?.address && !byMint.has(t.address))
-          .slice(0, 20);
-
-        if (newTokens.length > 0) {
-          const details = await Promise.allSettled(
-            newTokens.map((t) => fetchBestPoolForMint(t.address, s.timeframe))
-          );
-          let injected = 0;
-          let dupeTagged = 0;
-          for (let i = 0; i < newTokens.length; i++) {
-            const detail = details[i].status === "fulfilled" ? details[i].value : null;
-            if (!detail?.pool_address) continue;
-            if (byPool.has(detail.pool_address)) {
-              byPool.get(detail.pool_address).gmgn_signal = true;
-              dupeTagged++;
-            } else {
-              byPool.set(detail.pool_address, { ...detail, gmgn_signal: true });
-              injected++;
-            }
-          }
-          rawPools = Array.from(byPool.values());
-          if (injected > 0) log("screening", `GMGN: injected ${injected} trending token pool(s)`);
-          if (dupeTagged > 0) log("screening", `GMGN: tagged ${dupeTagged} more pool(s) via mint lookup`);
-        }
-      }
-    } catch (error) {
-      log("screening", `GMGN source fetch failed: ${error.message}`);
-    }
-  }
 
   const filteredExamples = [];
   const thresholdedRawPools = rawPools.filter((pool) => {
@@ -832,26 +475,6 @@ export async function discoverPools({
     if (!reason) return true;
     filteredExamples.push({ name: pool.name || pool.pool_address || "unknown pool", reason });
     if (pool.discord_signal) log("screening", `Discord signal filtered: ${pool.name || pool.pool_address} — ${reason}`);
-    try {
-      recordSkip({
-        pool: pool.pool_address,
-        name: pool.name,
-        reason,
-        source: "screening",
-        metrics: {
-          volatility: pool.volatility,
-          fee_active_tvl_ratio: pool.fee_active_tvl_ratio,
-          mcap: pool.mcap,
-          organic_score: pool.organic_score,
-          holders: pool.holders,
-          bin_step: pool.bin_step,
-          price_at_skip: pool.current_price ?? pool.price,
-          tvl: pool.tvl,
-          volume_window: pool.volume_window,
-          token_age_hours: pool.token_age_hours,
-        },
-      });
-    } catch {}
     return false;
   });
 
@@ -906,12 +529,8 @@ export async function discoverPools({
     }
   }
 
-  const totalFromApi = categoryResults.reduce((acc, r) => {
-    return acc + (r.status === "fulfilled" ? (r.value?.total ?? 0) : 0);
-  }, 0);
-
   return {
-    total: totalFromApi,
+    total: data.total,
     pools,
     filtered_examples: filteredExamples,
   };
@@ -923,7 +542,7 @@ export async function discoverPools({
  */
 export async function getTopCandidates({ limit = 10 } = {}) {
   const { config } = await import("../config.js");
-  const discovery = await discoverPools({ page_size: 100 });
+  const discovery = await discoverPools({ page_size: 50 });
   const { pools } = discovery;
   const filteredOut = Array.isArray(discovery.filtered_examples) ? [...discovery.filtered_examples] : [];
 
@@ -934,10 +553,9 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const occupiedMints = new Set(positions.map((p) => p.base_mint).filter(Boolean));
   const minTvl = Number(config.screening.minTvl ?? 0);
   const maxTvl = config.screening.maxTvl == null ? null : Number(config.screening.maxTvl);
-  // Config is in percent (0.5 = 0.5%); raw API value is decimal (0.005). Divide config by 100 to compare.
-  const minFeeActiveTvlRatio = Number(config.screening.minFeeActiveTvlRatio ?? 0) / 100;
+  const minFeeActiveTvlRatio = Number(config.screening.minFeeActiveTvlRatio ?? 0);
 
-  let eligible = pools
+  const eligible = pools
     .filter((p) => {
       const tvl = Number(p.tvl ?? p.active_tvl ?? 0);
       if (Number.isFinite(minTvl) && minTvl > 0 && tvl < minTvl) {
@@ -999,205 +617,44 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     }
   }
 
-  // Enrich with OKX data — advanced info (risk/bundle/sniper) + ATH price (no API key required)
+  // Dev blocklist check — filter pools whose creator is on the blocklist
   if (eligible.length > 0) {
-    const { getAdvancedInfo, getPriceInfo, getClusterList, getRiskFlags } = await import("./okx.js");
-    const okxResults = await Promise.allSettled(
-      eligible.map(async (p) => {
-        if (!p.base?.mint) return { adv: null, price: null, clusters: [], risk: null };
-        const [adv, price, clusters, risk] = await Promise.allSettled([
-          getAdvancedInfo(p.base.mint),
-          getPriceInfo(p.base.mint),
-          getClusterList(p.base.mint),
-          getRiskFlags(p.base.mint),
-        ]);
-
-        const mintShort = p.base.mint.slice(0, 8);
-        if (adv.status !== "fulfilled")      log("okx", `advanced-info unavailable for ${p.name} (${mintShort})`);
-        if (price.status !== "fulfilled")    log("okx", `price-info unavailable for ${p.name} (${mintShort})`);
-        if (clusters.status !== "fulfilled") log("okx", `cluster-list unavailable for ${p.name} (${mintShort})`);
-        if (risk.status !== "fulfilled")     log("okx", `risk-check unavailable for ${p.name} (${mintShort})`);
-
-        return {
-          adv: adv.status === "fulfilled" ? adv.value : null,
-          price: price.status === "fulfilled" ? price.value : null,
-          clusters: clusters.status === "fulfilled" ? clusters.value : [],
-          risk: risk.status === "fulfilled" ? risk.value : null,
-        };
-      })
-    );
-    for (let i = 0; i < eligible.length; i++) {
-      const r = okxResults[i];
-      if (r.status !== "fulfilled") continue;
-      const { adv, price, clusters, risk } = r.value;
-      if (adv) {
-        eligible[i].risk_level      = adv.risk_level;
-        eligible[i].bundle_pct      = adv.bundle_pct;
-        eligible[i].sniper_pct      = adv.sniper_pct;
-        eligible[i].suspicious_pct  = adv.suspicious_pct;
-        eligible[i].smart_money_buy = adv.smart_money_buy;
-        eligible[i].dev_sold_all    = adv.dev_sold_all;
-        eligible[i].dex_boost       = adv.dex_boost;
-        eligible[i].dex_screener_paid = adv.dex_screener_paid;
-        if (adv.creator && !eligible[i].dev) eligible[i].dev = adv.creator;
-      }
-      if (risk) {
-        eligible[i].is_rugpull = risk.is_rugpull;
-        eligible[i].is_wash    = risk.is_wash;
-      }
-      if (price) {
-        eligible[i].price_vs_ath_pct = price.price_vs_ath_pct;
-        eligible[i].ath              = price.ath;
-      }
-      if (clusters?.length) {
-        // Surface KOL presence and top cluster trend for LLM
-        eligible[i].kol_in_clusters      = clusters.some((c) => c.has_kol);
-        eligible[i].top_cluster_trend    = clusters[0]?.trend ?? null;      // buy|sell|neutral
-        eligible[i].top_cluster_hold_pct = clusters[0]?.holding_pct ?? null;
-      }
-    }
-    // Wash trading hard filter — fake volume = misleading fee yield
-    eligible.splice(0, eligible.length, ...eligible.filter((p) => {
-      if (p.is_wash) {
-        log("screening", `Risk filter: dropped ${p.name} — wash trading flagged`);
-        pushFilteredReason(filteredOut, p, "wash trading flagged");
-        return false;
-      }
-      return true;
-    }));
-
-    // Holder concentration hard filter — pre-fetch so LLM doesn't waste cycles
-    // on pools with permanent disqualifiers. Static rejects also cooldown the
-    // base mint so the same pool doesn't resurface every cycle.
-    if (eligible.length > 0) {
-      const { getTokenHolders } = await import("./token.js");
-      const { cooldownBaseMint } = await import("../pool-memory.js");
-      const cooldownHours = Number(config.screening.staticRejectCooldownHours ?? 24);
-      const maxTop10 = Number(config.screening.maxTop10Pct ?? 100);
-      const maxBots  = Number(config.screening.maxBotHoldersPct ?? 100);
-
-      const holderResults = await Promise.allSettled(
-        eligible.map((p) =>
-          p.base?.mint
-            ? getTokenHolders({ mint: p.base.mint, limit: 20 })
-            : Promise.resolve(null)
-        )
-      );
-
-      const survivors = [];
-      for (let i = 0; i < eligible.length; i++) {
-        const p = eligible[i];
-        const r = holderResults[i];
-        if (r.status !== "fulfilled" || !r.value) {
-          survivors.push(p);
-          continue;
-        }
-        const top10 = Number(r.value.top_10_real_holders_pct ?? 0);
-        const botsPct = r.value.bot_holders_pct;
-        p.top10_pct = top10;
-        p.bot_holders_pct = botsPct;
-
-        if (Number.isFinite(top10) && top10 > maxTop10) {
-          const reason = `top10 concentration ${top10.toFixed(2)}% > maxTop10Pct ${maxTop10}%`;
-          log("screening", `Static reject: ${p.name} — ${reason}`);
-          pushFilteredReason(filteredOut, p, reason);
-          cooldownBaseMint(p.base.mint, cooldownHours, reason);
-          continue;
-        }
-        if (botsPct != null && Number.isFinite(botsPct) && botsPct > maxBots) {
-          const reason = `bot holders ${botsPct.toFixed(2)}% > maxBotHoldersPct ${maxBots}%`;
-          log("screening", `Static reject: ${p.name} — ${reason}`);
-          pushFilteredReason(filteredOut, p, reason);
-          cooldownBaseMint(p.base.mint, cooldownHours, reason);
-          continue;
-        }
-        survivors.push(p);
-      }
-      const dropped = eligible.length - survivors.length;
-      eligible.splice(0, eligible.length, ...survivors);
-      if (dropped > 0) log("screening", `Holder concentration filter removed ${dropped} pool(s); base mints cooldowned for ${cooldownHours}h`);
-    }
-
-    // ATH filter — drop pools where price is too close to ATH
-    const athFilter = config.screening.athFilterPct;
-    if (athFilter != null) {
-      const threshold = 100 + athFilter; // e.g. -20 → threshold = 80 (price must be <= 80% of ATH)
-      const before = eligible.length;
-      eligible.splice(0, eligible.length, ...eligible.filter((p) => {
-        if (p.price_vs_ath_pct == null) return true; // no data → don't filter
-        if (p.price_vs_ath_pct > threshold) {
-          log("screening", `ATH filter: dropped ${p.name} — ${p.price_vs_ath_pct}% of ATH (limit: ${threshold}%)`);
-          pushFilteredReason(filteredOut, p, `${p.price_vs_ath_pct}% of ATH > ${threshold}% limit`);
-          return false;
-        }
-        return true;
-      }));
-      if (eligible.length < before) log("screening", `ATH filter removed ${before - eligible.length} pool(s)`);
-    }
-
-    // Drop any pools whose creator is on the dev blocklist (caught via advanced-info)
     const before = eligible.length;
     const filtered = eligible.filter((p) => {
       if (p.dev && isDevBlocked(p.dev)) {
-        log("dev_blocklist", `Filtered blocked deployer (okx) ${p.dev.slice(0, 8)} token ${p.base?.symbol}`);
+        log("dev_blocklist", `Filtered blocked deployer ${p.dev.slice(0, 8)} token ${p.base?.symbol}`);
         pushFilteredReason(filteredOut, p, "blocked deployer");
         return false;
       }
       return true;
     });
     eligible.splice(0, eligible.length, ...filtered);
-    if (eligible.length < before) log("dev_blocklist", `Filtered ${before - eligible.length} pool(s) via OKX creator check`);
-  }
-
-  // Enrich with DexScreener volume trend — passive signal, no hard filter
-  if (eligible.length > 0) {
-    const volResults = await Promise.allSettled(
-      eligible.map((pool) => getVolumeSignal(pool.pool))
-    );
-    volResults.forEach((r, i) => {
-      eligible[i].dex_volume = r.status === "fulfilled" ? r.value : null;
-    });
-  }
-
-  // Pump gate using DexScreener as fallback for Helius-injected pools where
-  // pool_price_change_pct is null (bypasses the earlier getRawPoolScreeningRejectReason gate)
-  const maxPump = config.screening.maxRecentPumpPct;
-  if (maxPump != null && Number.isFinite(maxPump) && maxPump > 0) {
-    const before = eligible.length;
-    eligible = eligible.filter((pool) => {
-      if (pool.price_change_pct != null) return true; // already checked in getRawPoolScreeningRejectReason
-      const dexChange = pool.dex_volume?.price_change_h1;
-      if (dexChange == null || !Number.isFinite(dexChange) || dexChange <= maxPump) return true;
-      log("screening", `Pump gate (dex fallback): dropped ${pool.name} — 1h +${dexChange}% > maxRecentPumpPct ${maxPump}%`);
-      pushFilteredReason(filteredOut, pool, `recent pump +${dexChange.toFixed(1)}% > maxRecentPumpPct ${maxPump}% (dex signal)`);
-      return false;
-    });
-    if (eligible.length < before) log("screening", `Pump gate removed ${before - eligible.length} candidate(s) via DexScreener fallback`);
+    if (eligible.length < before) log("dev_blocklist", `Filtered ${before - eligible.length} pool(s) via dev blocklist`);
   }
 
   if (config.indicators.enabled && eligible.length > 0) {
-    const confirmations = [];
-    for (const pool of eligible) {
-      try {
-        const confirmation = await confirmIndicatorPreset({
-          mint: pool.base?.mint,
-          side: "entry",
-        });
-        confirmations.push({ pool: pool.pool, confirmation });
-      } catch (error) {
-        confirmations.push({
-          pool: pool.pool,
-          confirmation: {
-            enabled: true,
-            confirmed: true,
-            skipped: true,
-            reason: `Indicator confirmation unavailable: ${error.message}`,
-            intervals: [],
-          },
-        });
-      }
-      await new Promise((r) => setTimeout(r, 300));
-    }
+    const confirmations = await Promise.all(
+      eligible.map(async (pool) => {
+        try {
+          const confirmation = await confirmIndicatorPreset({
+            mint: pool.base?.mint,
+            side: "entry",
+          });
+          return { pool: pool.pool, confirmation };
+        } catch (error) {
+          return {
+            pool: pool.pool,
+            confirmation: {
+              enabled: true,
+              confirmed: true,
+              skipped: true,
+              reason: `Indicator confirmation unavailable: ${error.message}`,
+              intervals: [],
+            },
+          };
+        }
+      }),
+    );
     const confirmationByPool = new Map(confirmations.map((entry) => [entry.pool, entry.confirmation]));
     const before = eligible.length;
     const confirmedEligible = eligible.filter((pool) => {
@@ -1293,14 +750,6 @@ function condensePool(p) {
     discord_signal_count: p.discord_signal_count || 0,
     discord_signal_seen_count: p.discord_signal_seen_count || 0,
     discord_signal_last_seen_at: p.discord_signal_last_seen_at || null,
-    gecko_signal: p.gecko_signal || null,
-    bitquery_signal: Boolean(p.bitquery_signal),
-    bitquery_signal_at: p.bitquery_signal_at || null,
-    helius_signal: Boolean(p.helius_signal),
-    helius_signers: p.helius_signers || null,
-    helius_signal_at: p.helius_signal_at || null,
-    volume_top_signal: Boolean(p.volume_top_signal),
-    gmgn_signal: Boolean(p.gmgn_signal),
 
     // Price action
     price: p.pool_price,
