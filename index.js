@@ -762,7 +762,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
     if (getTrackedPositions(true).length === 0) return;
     _pnlPollBusy = true;
     try {
-      const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
+      const result = await getMyPositions({ force: true, silent: false }).catch(() => null);
       if (!result?.positions?.length) return;
       for (const p of result.positions) {
         if (
