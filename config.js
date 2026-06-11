@@ -116,6 +116,8 @@ export const config = {
     repeatDeployCooldownMinFeeEarnedPct: u.repeatDeployCooldownMinFeeEarnedPct ?? u.repeatDeployCooldownMinFeeYieldPct ?? 0,
     bigLossBlacklistPct:    u.bigLossBlacklistPct    ?? -10,  // pnl_pct threshold to trigger extended mint cooldown
     bigLossBlacklistHours:  u.bigLossBlacklistHours  ?? 24,   // duration of extended mint cooldown after big loss
+    // Screener: skip pool if closed within this many hours (any close reason)
+    recentDeployCooldownHours: u.recentDeployCooldownHours ?? 2,
     // Volatility-whipsaw guard: reject deploy when pool had N cooldowns within window
     recentVolBlockWindowHours: u.recentVolBlockWindowHours ?? 4,
     recentVolBlockMaxCount:    u.recentVolBlockMaxCount    ?? 2,

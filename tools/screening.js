@@ -2,7 +2,7 @@ import { config } from "../config.js";
 import { isBlacklisted } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
-import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
+import { isBaseMintOnCooldown, isPoolOnCooldown, isRecentlyDeployed } from "../pool-memory.js";
 import { recordSkip } from "../skip-tracker.js";
 import { confirmIndicatorPreset } from "./chart-indicators.js";
 import { getVolumeSignal } from "./dexscreener.js";
@@ -973,6 +973,12 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       if (isBaseMintOnCooldown(p.base?.mint)) {
         log("screening", `Filtered cooldown token ${p.base?.symbol} (${p.base?.mint?.slice(0, 8)})`);
         pushFilteredReason(filteredOut, p, "token cooldown active");
+        return false;
+      }
+      const recentCooldownH = config.management.recentDeployCooldownHours;
+      if (recentCooldownH && isRecentlyDeployed(p.pool, recentCooldownH)) {
+        log("screening", `Filtered recently deployed pool ${p.name} (${p.pool.slice(0, 8)}) — closed within ${recentCooldownH}h`);
+        pushFilteredReason(filteredOut, p, `recently deployed (within ${recentCooldownH}h)`);
         return false;
       }
       return true;

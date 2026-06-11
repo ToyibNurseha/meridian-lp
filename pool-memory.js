@@ -211,7 +211,7 @@ export function recordPoolDeploy(poolAddress, deployData) {
   }
 
   // Set cooldown for low yield closes — pool wasn't profitable enough, don't redeploy soon
-  if (deploy.close_reason === "low yield") {
+  if (deploy.close_reason?.toLowerCase().includes("low yield")) {
     const cooldownHours = 4;
     const cooldownUntil = setPoolCooldown(entry, cooldownHours, "low yield");
     log("pool-memory", `Cooldown set for ${entry.name} until ${cooldownUntil} (low yield close)`);
@@ -324,6 +324,15 @@ export function isBaseMintOnCooldown(baseMint) {
     entry?.base_mint_cooldown_until &&
     new Date(entry.base_mint_cooldown_until) > now
   );
+}
+
+export function isRecentlyDeployed(poolAddress, hours) {
+  if (!poolAddress || !hours) return false;
+  const db = load();
+  const entry = db[poolAddress];
+  if (!entry?.last_deployed_at) return false;
+  const cutoff = Date.now() - hours * 60 * 60 * 1000;
+  return new Date(entry.last_deployed_at).getTime() > cutoff;
 }
 
 // ─── Read ──────────────────────────────────────────────────────
