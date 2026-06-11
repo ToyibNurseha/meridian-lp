@@ -550,8 +550,11 @@ export async function discoverPools({
     }
   }
 
+  const totalFromApi = categoryResults.reduce((acc, r) =>
+    acc + (r.status === "fulfilled" ? (r.value?.total ?? 0) : 0), 0);
+
   return {
-    total: data.total,
+    total: totalFromApi,
     pools,
     filtered_examples: filteredExamples,
   };
