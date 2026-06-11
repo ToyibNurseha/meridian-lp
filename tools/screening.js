@@ -396,7 +396,8 @@ export async function discoverPools({
     s.maxTvl != null ? `tvl<=${s.maxTvl}` : null,
     `dlmm_bin_step>=${s.minBinStep}`,
     `dlmm_bin_step<=${s.maxBinStep}`,
-    `fee_active_tvl_ratio>=${s.minFeeActiveTvlRatio}`,
+    // Config stores percent (e.g. 0.3 = 0.3%); API expects decimal (0.003). Divide by 100.
+    `fee_active_tvl_ratio>=${s.minFeeActiveTvlRatio / 100}`,
     `base_token_organic_score>=${s.minOrganic}`,
     `quote_token_organic_score>=${s.minQuoteOrganic}`,
     s.minTokenAgeHours != null ? `base_token_created_at<=${Date.now() - s.minTokenAgeHours * 3_600_000}` : null,
@@ -406,14 +407,34 @@ export async function discoverPools({
       : null,
   ].filter(Boolean).join("&&");
 
-  const data = await fetchPoolDiscoveryPage({
-    page_size,
-    filters,
-    timeframe: s.timeframe,
-    category: s.category,
-  });
+  // "trending+new" is not a valid API category — split into separate calls
+  const categories = s.category === "trending+new"
+    ? ["trending", "new"]
+    : [s.category || "trending"];
 
-  let rawPools = Array.isArray(data.data) ? data.data : [];
+  const categoryResults = await Promise.allSettled(
+    categories.map((cat) => fetchPoolDiscoveryPage({ page_size, filters, timeframe: s.timeframe, category: cat }))
+  );
+
+  const seenAddresses = new Set();
+  let rawPools = [];
+  for (let i = 0; i < categoryResults.length; i++) {
+    const result = categoryResults[i];
+    if (result.status !== "fulfilled") {
+      log("screening", `Category [${categories[i]}] failed: ${result.reason?.message || "unknown"}`);
+      continue;
+    }
+    const returned = result.value?.data?.length ?? 0;
+    const total = result.value?.total ?? 0;
+    log("screening", `Category [${categories[i]}]: ${returned} returned (API total: ${total})`);
+    for (const pool of (result.value?.data || [])) {
+      const addr = pool?.pool_address;
+      if (addr && !seenAddresses.has(addr)) {
+        seenAddresses.add(addr);
+        rawPools.push(pool);
+      }
+    }
+  }
 
   if (config.screening.useDiscordSignals) {
     const signalCandidates = await fetchDiscordSignalCandidates().catch((error) => {
