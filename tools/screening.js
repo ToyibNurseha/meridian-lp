@@ -396,8 +396,7 @@ export async function discoverPools({
     s.maxTvl != null ? `tvl<=${s.maxTvl}` : null,
     `dlmm_bin_step>=${s.minBinStep}`,
     `dlmm_bin_step<=${s.maxBinStep}`,
-    // Config stores percent (e.g. 0.3 = 0.3%); API expects decimal (0.003). Divide by 100.
-    `fee_active_tvl_ratio>=${s.minFeeActiveTvlRatio / 100}`,
+    `fee_active_tvl_ratio>=${s.minFeeActiveTvlRatio}`,
     `base_token_organic_score>=${s.minOrganic}`,
     `quote_token_organic_score>=${s.minQuoteOrganic}`,
     s.minTokenAgeHours != null ? `base_token_created_at<=${Date.now() - s.minTokenAgeHours * 3_600_000}` : null,
