@@ -369,8 +369,9 @@ After executing, write a brief one-line result per position.
     _managementBusy = false;
     if (!silent && telegramEnabled()) {
       if (mgmtReport) {
-        if (liveMessage) await liveMessage.finalize(stripThink(mgmtReport)).catch(() => {});
-        else sendMessage(`🔄 Management Cycle\n\n${stripThink(mgmtReport)}`).catch(() => { });
+        const finalMgmtReport = stripThink(mgmtReport) || "Management cycle complete — no visible output from model.";
+        if (liveMessage) await liveMessage.finalize(finalMgmtReport).catch(() => {});
+        else sendMessage(`🔄 Management Cycle\n\n${finalMgmtReport}`).catch(() => { });
       }
       for (const p of positions) {
         if (!p.in_range && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
@@ -695,8 +696,9 @@ IMPORTANT:
     _screeningBusy = false;
     if (!silent && telegramEnabled()) {
       if (screenReport) {
-        if (liveMessage) await liveMessage.finalize(stripThink(screenReport)).catch(() => {});
-        else sendMessage(`🔍 Screening Cycle\n\n${stripThink(screenReport)}`).catch(() => { });
+        const finalReport = stripThink(screenReport) || "⛔ NO DEPLOY\n\nCycle complete — no visible output from model.";
+        if (liveMessage) await liveMessage.finalize(finalReport).catch(() => {});
+        else sendMessage(`🔍 Screening Cycle\n\n${finalReport}`).catch(() => { });
       }
     }
   }

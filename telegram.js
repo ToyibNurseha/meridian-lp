@@ -108,6 +108,8 @@ async function postTelegram(method, body) {
       const err = await res.text();
       if (res.status === 401) {
         log("telegram_error", `${method} 401 Unauthorized — check TELEGRAM_BOT_TOKEN in .env (invalid, revoked, or encrypted without .envrypt key)`);
+      } else if (res.status === 400 && err.includes("message is not modified")) {
+        // no-op: Telegram rejects edit with identical content
       } else {
         log("telegram_error", `${method} ${res.status}: ${err.slice(0, 200)}`);
       }
@@ -132,6 +134,8 @@ async function postTelegramRaw(method, body) {
       const err = await res.text();
       if (res.status === 401) {
         log("telegram_error", `${method} 401 Unauthorized — check TELEGRAM_BOT_TOKEN in .env (invalid, revoked, or encrypted without .envrypt key)`);
+      } else if (res.status === 400 && err.includes("message is not modified")) {
+        // no-op
       } else {
         log("telegram_error", `${method} ${res.status}: ${err.slice(0, 200)}`);
       }
