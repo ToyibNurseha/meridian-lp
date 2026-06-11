@@ -523,10 +523,9 @@ export async function discoverPools({
 } = {}) {
   const s = config.screening;
   const filters = [
-    "base_token_has_critical_warnings=false",
-    "quote_token_has_critical_warnings=false",
-    s.excludeHighSupplyConcentration ? "base_token_has_high_supply_concentration=false" : null,
-    "base_token_has_high_single_ownership=false",
+    // Warning flags intentionally excluded from API filter: new pools return undefined (not false)
+    // for these fields. API treats undefined != false → silently drops valid new pools.
+    // Local getRawPoolScreeningRejectReason checks === true, so actual bad pools still get rejected.
     "pool_type=dlmm",
     `base_token_market_cap>=${s.minMcap}`,
     `base_token_market_cap<=${s.maxMcap}`,
