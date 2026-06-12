@@ -487,13 +487,26 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
   );
 }
 
-export async function notifyClose({ pair, pnlUsd, pnlPct }) {
+export async function notifyClose({ pair, pnlUsd, pnlPct, pnlSol, depositedSol, withdrawnSol, feesSol, minutesHeld, strategy, closeReason }) {
   if (hasActiveLiveMessage()) return;
-  const sign = pnlUsd >= 0 ? "+" : "";
-  await sendHTML(
-    `🔒 <b>Closed</b> ${pair}\n` +
-    `PnL: ${sign}$${(pnlUsd ?? 0).toFixed(2)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)`
-  );
+  const sign = (pnlSol ?? pnlUsd) >= 0 ? "+" : "";
+  const pnlLine = pnlSol != null
+    ? `PnL: ${sign}◎${Math.abs(pnlSol).toFixed(5)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)`
+    : `PnL: ${sign}◎${Math.abs(pnlUsd ?? 0).toFixed(5)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)`;
+  const ilSol = (withdrawnSol != null && depositedSol != null) ? (withdrawnSol - depositedSol) : null;
+  const lines = [
+    `🔒 <b>Closed</b> ${pair}`,
+    pnlLine,
+    depositedSol != null ? `💰 Deposited: ◎${depositedSol.toFixed(4)}` : null,
+    withdrawnSol != null ? `💸 Withdrawn: ◎${withdrawnSol.toFixed(4)}` : null,
+    (feesSol != null || ilSol != null)
+      ? [feesSol != null ? `Fees: ◎${feesSol.toFixed(5)}` : null, ilSol != null ? `IL: ◎${ilSol.toFixed(5)}` : null].filter(Boolean).join(" | ")
+      : null,
+    minutesHeld != null ? `⏱️ Hold: ${minutesHeld}m` : null,
+    strategy ? `📐 Strategy: ${strategy}` : null,
+    closeReason ? `📝 Reason: ${closeReason}` : null,
+  ];
+  await sendHTML(lines.filter(Boolean).join("\n"));
 }
 
 export async function notifySwap({ inputSymbol, outputSymbol, amountIn, amountOut, tx }) {
