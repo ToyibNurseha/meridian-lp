@@ -167,7 +167,7 @@ WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
           strategy: {
             type: "string",
             enum: ["bid_ask", "spot"],
-            description: "DLMM strategy type. If user specifies, use exactly what they said. Otherwise omit — the system default from config.strategy.strategy will be used automatically."
+            description: "DLMM strategy type. Pass the candidate's recommended_strategy value (spot or bid_ask) — it is computed from price action and is your primary signal. Only omit if you have a strong counter-reason; omitting falls back to the config default."
           },
           bins_below: {
             type: "number",

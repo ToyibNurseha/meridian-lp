@@ -309,12 +309,14 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
             log("agent", `No-tool final answer accepted (matched NO DEPLOY / NO ACTION pattern)`);
             return { content: msg.content, userMessage: goal };
           }
+          const lastContent = msg.content;
           noToolRetryCount += 1;
           messages.pop();
           log("agent", `Rejected no-tool final answer (${noToolRetryCount}/3) for tool-required request`);
           if (noToolRetryCount >= 3) {
+            const fallbackVisible = lastContent?.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
             return {
-              content: "I couldn't complete that reliably because no tool call was made. Please retry after checking the logs.",
+              content: fallbackVisible || lastContent || "I couldn't complete that reliably because no tool call was made. Please retry after checking the logs.",
               userMessage: goal,
             };
           }

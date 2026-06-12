@@ -453,7 +453,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     // Load active strategy
     const activeStrategy = getActiveStrategy();
     const deployStrategy = config.strategy.strategy;
-    const strategyBlock = `DEPLOY STRATEGY: ${deployStrategy} (from config) | bins_above: 0 (FIXED — never change) | deposit: SOL only (amount_y, amount_x=0)`
+    const strategyBlock = `DEPLOY STRATEGY: dynamic (default: ${deployStrategy}) — use each candidate's recommended_strategy field ("spot" or "bid_ask") as primary signal | bins_above: 0 (FIXED — never change) | deposit: SOL only (amount_y, amount_x=0)`
       + (activeStrategy ? `\nSTRATEGY CONTEXT: ${activeStrategy.name} — entry: ${activeStrategy.entry?.condition || "n/a"} | exit: ${activeStrategy.exit?.notes || "n/a"} | best for: ${activeStrategy.best_for}` : "");
 
     // Fetch top candidates, then recon each sequentially with a small delay to avoid 429s
@@ -1004,6 +1004,7 @@ function parseConfigValue(raw) {
   if (/^(true|false)$/i.test(value)) return value.toLowerCase() === "true";
   if (/^null$/i.test(value)) return null;
   if (/^-?\d+(\.\d+)?$/.test(value)) return Number(value);
+  if (/^-?\d+(\.\d+)?%$/.test(value)) return Number(value.slice(0, -1));
   if ((value.startsWith("[") && value.endsWith("]")) || (value.startsWith("{") && value.endsWith("}"))) {
     return JSON.parse(value);
   }
@@ -1536,7 +1537,10 @@ async function telegramHandler(msg) {
         reason: "Telegram slash command /setcfg",
       });
       if (!result?.success) {
-        await sendMessage(`Config update failed.\nUnknown: ${(result?.unknown || []).join(", ") || "none"}`).catch(() => {});
+        const detail = result?.error
+          ? `\nError: ${result.error}`
+          : `\nUnknown: ${(result?.unknown || []).join(", ") || "none"}`;
+        await sendMessage(`Config update failed.${detail}`).catch(() => {});
         return;
       }
       await sendMessage(`✅ Updated ${key} = ${JSON.stringify(value)}`).catch(() => {});
