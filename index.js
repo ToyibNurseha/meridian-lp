@@ -294,31 +294,82 @@ export async function runManagementCycle({ silent = false } = {}) {
     }
 
     // ── Build JS report ──────────────────────────────────────────────
+    const cur = config.management.solMode ? "◎" : "$";
     const totalValue = positionData.reduce((s, p) => s + (p.total_value_usd ?? 0), 0);
     const totalUnclaimed = positionData.reduce((s, p) => s + (p.unclaimed_fees_usd ?? 0), 0);
-
-    const reportLines = positionData.map((p) => {
-      const act = actionMap.get(p.position);
-      const inRange = p.in_range ? "🟢 IN" : `🔴 OOR ${p.minutes_out_of_range ?? 0}m`;
-      const val = config.management.solMode ? `◎${p.total_value_usd ?? "?"}` : `$${p.total_value_usd ?? "?"}`;
-      const unclaimed = config.management.solMode ? `◎${p.unclaimed_fees_usd ?? "?"}` : `$${p.unclaimed_fees_usd ?? "?"}`;
-      const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
-      let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}% | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
-      if (p.instruction) line += `\nNote: "${p.instruction}"`;
-      if (act.action === "CLOSE" && act.rule === "exit") line += `\n⚡ Trailing TP: ${act.reason}`;
-      if (act.action === "CLOSE" && act.rule && act.rule !== "exit") line += `\nRule ${act.rule}: ${act.reason}`;
-      if (act.action === "CLAIM") line += `\n→ Claiming fees`;
-      return line;
-    });
+    const totalPnl = positionData.reduce((s, p) => s + (p.pnl_usd ?? 0), 0);
+    const totalValueTrueUsd = positionData.reduce((s, p) => s + (p.total_value_true_usd ?? 0), 0);
+    const solPrice = config.management.solMode && totalValue > 0 && totalValueTrueUsd > 0
+      ? Math.round(totalValueTrueUsd / totalValue) : null;
 
     const needsAction = [...actionMap.values()].filter(a => a.action !== "STAY");
     const actionSummary = needsAction.length > 0
       ? needsAction.map(a => a.action === "INSTRUCTION" ? "EVAL instruction" : `${a.action}${a.reason ? ` (${a.reason})` : ""}`).join(", ")
       : "no action";
 
-    const cur = config.management.solMode ? "◎" : "$";
-    mgmtReport = reportLines.join("\n\n") +
-      `\n\nSummary: 💼 ${positions.length} positions | ${cur}${totalValue.toFixed(4)} | fees: ${cur}${totalUnclaimed.toFixed(4)} | ${actionSummary}`;
+    const DIVIDER = "─────────────────────────────";
+    const timestamp = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+    const pnlSignTotal = totalPnl >= 0 ? "+" : "";
+
+    const posLines = positionData.map((p, idx) => {
+      const act = actionMap.get(p.position);
+      const trackedPos = getTrackedPosition(p.position);
+      const inRange = p.in_range ? "🟢 IN" : `🔴 OOR ${p.minutes_out_of_range ?? 0}m`;
+      const actionLabel = act.action === "INSTRUCTION" ? "HOLD" : act.action;
+
+      const totalBins = (p.upper_bin != null && p.lower_bin != null) ? (p.upper_bin - p.lower_bin) : null;
+      let rangePos = 50;
+      if (p.upper_bin != null && p.lower_bin != null && p.upper_bin > p.lower_bin) {
+        if ((p.active_bin ?? p.lower_bin) <= p.lower_bin) rangePos = 0;
+        else if ((p.active_bin ?? p.upper_bin) >= p.upper_bin) rangePos = 100;
+        else rangePos = Math.round((p.active_bin - p.lower_bin) / (p.upper_bin - p.lower_bin) * 100);
+      }
+      const barFilled = Math.round(rangePos / 5);
+      const bar = `[${"▓".repeat(barFilled)}${"░".repeat(20 - barFilled)}] ${rangePos}%`;
+
+      const valUsd = p.total_value_true_usd != null ? ` ($${p.total_value_true_usd.toFixed(2)})` : "";
+      const pnlSign = (p.pnl_usd ?? 0) >= 0 ? "+" : "";
+      const pnlUsdVal = p.total_value_true_usd != null && p.pnl_pct != null
+        ? ` / $${Math.abs(p.pnl_pct / 100 * p.total_value_true_usd).toFixed(2)}` : "";
+      const feesUsd = p.unclaimed_fees_true_usd != null ? ` / $${p.unclaimed_fees_true_usd.toFixed(2)}` : "";
+
+      let decision = actionLabel;
+      if (act.action === "STAY") decision = p.in_range ? "STAY" : `STAY — OOR ${p.minutes_out_of_range ?? 0}m`;
+      else if (act.action === "CLOSE" && act.rule === "exit") decision = `CLOSE — ⚡ Trailing TP: ${act.reason}`;
+      else if (act.action === "CLOSE" && act.reason) decision = `CLOSE — ${act.reason}`;
+      else if (act.action === "CLAIM") decision = "CLAIM fees";
+      else if (act.action === "INSTRUCTION") decision = `HOLD — check instruction`;
+
+      return [
+        `[${idx + 1}] ${p.pair}  ${inRange}  →  ${actionLabel}`,
+        [p.age_minutes != null ? `Age ${p.age_minutes}m` : null, trackedPos?.strategy || null, totalBins != null ? `${totalBins} bins` : null].filter(Boolean).join("  •  "),
+        bar,
+        "",
+        `Val:   ${cur}${(p.total_value_usd ?? 0).toFixed(4)}${config.management.solMode ? valUsd : ""}`,
+        `PnL:   ${cur}${pnlSign}${Math.abs(p.pnl_usd ?? 0).toFixed(5)} (${pnlSign}${(p.pnl_pct ?? 0).toFixed(2)}%)${config.management.solMode ? pnlUsdVal : ""}`,
+        `Fees:  ${cur}${(p.unclaimed_fees_usd ?? 0).toFixed(5)}${config.management.solMode ? feesUsd : ""} unclaimed`,
+        `Yield: ${p.fee_per_tvl_24h ?? "?"}% (24h)`,
+        "",
+        `Decision: ${decision}`,
+        p.instruction ? `Note: "${p.instruction}"` : null,
+      ].filter(l => l !== null).join("\n");
+    });
+
+    const reportHeader = [
+      `🔄 LP Cycle  •  ${timestamp}${solPrice ? `  •  SOL $${solPrice}` : ""}`,
+      "",
+      `📊 PORTFOLIO  (${positions.length} position${positions.length !== 1 ? "s" : ""})`,
+      `Value:    ${cur}${totalValue.toFixed(4)}${solPrice ? `  ($${(totalValue * solPrice).toFixed(2)})` : ""}`,
+      `PnL:      ${cur}${pnlSignTotal}${Math.abs(totalPnl).toFixed(5)}`,
+      `Fees:     ${cur}${totalUnclaimed.toFixed(5)} unclaimed`,
+      DIVIDER,
+    ].join("\n");
+
+    mgmtReport = reportHeader + "\n" +
+      posLines.join("\n" + DIVIDER + "\n") + "\n" +
+      DIVIDER + "\n🎯 ACTIONS: " + (needsAction.length > 0
+        ? needsAction.map(a => a.action === "INSTRUCTION" ? "EVAL instruction" : `${a.action}${a.reason ? ` (${a.reason})` : ""}`).join(", ")
+        : "none this cycle");
 
     // ── Call LLM only if action needed ──────────────────────────────
     const actionPositions = positionData.filter(p => {
