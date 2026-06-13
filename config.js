@@ -95,7 +95,7 @@ export const config = {
     maxTop10Pct:       u.maxTop10Pct       ?? 60,  // max top 10 holders concentration
     allowedLaunchpads: u.allowedLaunchpads ?? [],  // allow-list launchpads, [] = no allow-list
     blockedLaunchpads:  u.blockedLaunchpads  ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
-    blockedTokenKeywords: u.blockedTokenKeywords ?? ["elon", "musk", "grok", "xmusk"],  // case-insensitive name/symbol filter
+    blockedTokenKeywords: u.blockedTokenKeywords ?? ["elon", "musk", "grok", "xmusk", "spcx", "spacex"],  // case-insensitive name/symbol filter
     minTokenAgeHours:   u.minTokenAgeHours   ?? null, // null = no minimum
     maxTokenAgeHours:   u.maxTokenAgeHours   ?? null, // null = no maximum
     // Dynamic strategy selection
