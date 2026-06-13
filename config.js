@@ -98,6 +98,7 @@ export const config = {
     blockedTokenKeywords: u.blockedTokenKeywords ?? ["elon", "musk", "grok", "xmusk", "spcx", "spacex", "tesla"],  // case-insensitive name/symbol filter
     minTokenAgeHours:   u.minTokenAgeHours   ?? null, // null = no minimum
     maxTokenAgeHours:   u.maxTokenAgeHours   ?? null, // null = no maximum
+    maxVolatility:      u.maxVolatility      ?? null, // null = no cap; e.g. 10 blocks high-vol tokens
     // Dynamic strategy selection
     pumpSpotThresholdPct: u.pumpSpotThresholdPct ?? 15,  // price_change_pct above this → recommend spot (pump entry)
     dumpSpotThresholdPct: u.dumpSpotThresholdPct ?? 15,  // price_change_pct below negative this → recommend spot (dump recovery)
@@ -294,6 +295,7 @@ export function reloadScreeningThresholds() {
     if (fresh.category          != null) s.category          = fresh.category;
     if (fresh.minTokenAgeHours  !== undefined) s.minTokenAgeHours = fresh.minTokenAgeHours;
     if (fresh.maxTokenAgeHours  !== undefined) s.maxTokenAgeHours = fresh.maxTokenAgeHours;
+    if (fresh.maxVolatility     !== undefined) s.maxVolatility = fresh.maxVolatility;
     if (fresh.avoidPvpSymbols   !== undefined) s.avoidPvpSymbols = fresh.avoidPvpSymbols;
     if (fresh.blockPvpSymbols   !== undefined) s.blockPvpSymbols = fresh.blockPvpSymbols;
     if (fresh.maxBotHoldersPct  != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct;
