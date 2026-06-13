@@ -134,6 +134,11 @@ function getRawPoolScreeningRejectReason(pool, s) {
   if (includesCaseInsensitive(s.blockedLaunchpads, launchpad)) {
     return `blocked launchpad (${launchpad})`;
   }
+  if (Array.isArray(s.blockedTokenKeywords) && s.blockedTokenKeywords.length > 0) {
+    const nameToCheck = `${base?.name || ""} ${base?.symbol || ""}`.toLowerCase();
+    const hit = s.blockedTokenKeywords.find(kw => nameToCheck.includes(String(kw).toLowerCase()));
+    if (hit) return `blocked token keyword (${hit})`;
+  }
   if (s.minTokenAgeHours != null) {
     const maxCreatedAt = Date.now() - s.minTokenAgeHours * 3_600_000;
     if (createdAt == null || createdAt > maxCreatedAt) return `token age below minTokenAgeHours ${s.minTokenAgeHours}`;
