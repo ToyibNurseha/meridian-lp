@@ -487,8 +487,8 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
   );
 }
 
-export async function notifyClose({ pair, pnlUsd, pnlPct, pnlSol, depositedSol, withdrawnSol, feesSol, minutesHeld, strategy, closeReason }) {
-  if (hasActiveLiveMessage()) return;
+export async function notifyClose({ pair, pnlUsd, pnlPct, pnlSol, depositedSol, withdrawnSol, feesSol, minutesHeld, strategy, closeReason, force = false }) {
+  if (!force && hasActiveLiveMessage()) return;
   const sign = (pnlSol ?? pnlUsd) >= 0 ? "+" : "";
   const pnlLine = pnlSol != null
     ? `PnL: ${sign}◎${Math.abs(pnlSol).toFixed(5)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)`

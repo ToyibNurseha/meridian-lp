@@ -42,6 +42,9 @@ const TIMEFRAME_MINUTES = {
 import { log, logAction } from "../logger.js";
 import { notifyDeploy, notifyClose, notifySwap } from "../telegram.js";
 
+let _forceCloseNotify = false;
+export function setForceCloseNotify(v) { _forceCloseNotify = v; }
+
 function numberOrNull(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
@@ -631,7 +634,8 @@ export async function executeTool(name, args) {
       } else if (name === "deploy_position") {
         notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
       } else if (name === "close_position") {
-        notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0, pnlSol: result.pnl_sol ?? null, depositedSol: result.deposited_sol ?? null, withdrawnSol: result.withdrawn_sol ?? null, feesSol: result.fees_sol ?? null, minutesHeld: result.minutes_held ?? null, strategy: result.strategy ?? null, closeReason: result.close_reason ?? null }).catch(() => {});
+        const _fnc = _forceCloseNotify; _forceCloseNotify = false;
+        notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0, pnlSol: result.pnl_sol ?? null, depositedSol: result.deposited_sol ?? null, withdrawnSol: result.withdrawn_sol ?? null, feesSol: result.fees_sol ?? null, minutesHeld: result.minutes_held ?? null, strategy: result.strategy ?? null, closeReason: result.close_reason ?? null, force: _fnc }).catch(() => {});
         // Note low-yield closes in pool memory so screener avoids redeploying
         if (args.reason && args.reason.toLowerCase().includes("yield")) {
           const poolAddr = result.pool || args.pool_address;

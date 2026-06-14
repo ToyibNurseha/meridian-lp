@@ -10,7 +10,7 @@ import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
-import { executeTool, registerCronRestarter } from "./tools/executor.js";
+import { executeTool, registerCronRestarter, setForceCloseNotify } from "./tools/executor.js";
 import {
   startPolling,
   stopPolling,
@@ -831,6 +831,18 @@ Summarize the current portfolio health, total fees earned, and performance of al
             }
             continue;
           }
+          // Direct close for SL/TP — skip LLM, force notification regardless of live message state
+          if (exit.action === "STOP_LOSS" || exit.action === "TAKE_PROFIT") {
+            log("state", `[PnL poll] Direct close: ${p.pair} — ${exit.action} (${exit.reason}) — no LLM`);
+            setForceCloseNotify(true);
+            await executeTool("close_position", { position_address: p.position, close_reason: exit.reason ?? exit.action.toLowerCase() }).catch((e) => {
+              setForceCloseNotify(false);
+              log("cron_error", `Poller direct close failed: ${e.message}`);
+            });
+            const afterCount = (await getMyPositions({ force: true, silent: true }).catch(() => null))?.positions?.length ?? 0;
+            if (afterCount < config.risk.maxPositions) runScreeningCycle().catch((e) => log("cron_error", `Post-close screening failed: ${e.message}`));
+            break;
+          }
           const cooldownMs = config.schedule.managementIntervalMin * 60 * 1000;
           const sinceLastTrigger = Date.now() - _pollTriggeredAt;
           if (sinceLastTrigger >= cooldownMs) {
@@ -844,6 +856,18 @@ Summarize the current portfolio health, total fees earned, and performance of al
         }
         const closeRule = getDeterministicCloseRule(p, config.management);
         if (closeRule) {
+          // Direct close for SL (rule 1) and TP (rule 2) — skip LLM, force notification
+          if (closeRule.rule === 1 || closeRule.rule === 2) {
+            log("state", `[PnL poll] Direct close: ${p.pair} — Rule ${closeRule.rule}: ${closeRule.reason} — no LLM`);
+            setForceCloseNotify(true);
+            await executeTool("close_position", { position_address: p.position, close_reason: closeRule.reason }).catch((e) => {
+              setForceCloseNotify(false);
+              log("cron_error", `Poller direct close failed: ${e.message}`);
+            });
+            const afterCount = (await getMyPositions({ force: true, silent: true }).catch(() => null))?.positions?.length ?? 0;
+            if (afterCount < config.risk.maxPositions) runScreeningCycle().catch((e) => log("cron_error", `Post-close screening failed: ${e.message}`));
+            break;
+          }
           const cooldownMs = config.schedule.managementIntervalMin * 60 * 1000;
           const sinceLastTrigger = Date.now() - _pollTriggeredAt;
           if (sinceLastTrigger >= cooldownMs) {
