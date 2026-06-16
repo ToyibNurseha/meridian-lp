@@ -425,6 +425,7 @@ const BOT_COMMANDS = [
   { command: "settings",   description: "Button menu for common config" },
   { command: "setcfg",     description: "Update persisted config key" },
   { command: "screen",     description: "Refresh deterministic candidate list" },
+  { command: "scan",       description: "Run full screening cycle now (LLM — may deploy)" },
   { command: "candidates", description: "Show latest cached candidates" },
   { command: "deploy",     description: "Deploy candidate by cached index" },
   { command: "briefing",   description: "Morning briefing" },

@@ -105,6 +105,7 @@ function getRawPoolScreeningRejectReason(pool, s) {
   if (mcap == null || mcap < s.minMcap) return `mcap ${mcap ?? "unknown"} below minMcap ${s.minMcap}`;
   if (mcap > s.maxMcap) return `mcap ${mcap} above maxMcap ${s.maxMcap}`;
   if (holders == null || holders < s.minHolders) return `holders ${holders ?? "unknown"} below minHolders ${s.minHolders}`;
+  if (s.minTotalLps > 0 && (pool?.total_lps == null || pool.total_lps < s.minTotalLps)) return `total_lps ${pool?.total_lps ?? "unknown"} below minTotalLps ${s.minTotalLps}`;
   if (volume == null || volume < s.minVolume) return `volume ${volume ?? "unknown"} below minVolume ${s.minVolume}`;
   if (tvl == null || tvl < s.minTvl) return `TVL ${tvl ?? "unknown"} below minTvl ${s.minTvl}`;
   if (s.maxTvl != null && tvl > s.maxTvl) return `TVL ${tvl} above maxTvl ${s.maxTvl}`;
@@ -399,6 +400,7 @@ export async function discoverPools({
     `base_token_market_cap>=${s.minMcap}`,
     `base_token_market_cap<=${s.maxMcap}`,
     `base_token_holders>=${s.minHolders}`,
+    s.minTotalLps > 0 ? `total_lps>=${s.minTotalLps}` : null,
     `volume>=${s.minVolume}`,
     `tvl>=${s.minTvl}`,
     s.maxTvl != null ? `tvl<=${s.maxTvl}` : null,
@@ -414,10 +416,16 @@ export async function discoverPools({
       : null,
   ].filter(Boolean).join("&&");
 
-  // "trending+new" is not a valid API category — split into separate calls
-  const categories = s.category === "trending+new"
-    ? ["trending", "new"]
-    : [s.category || "trending"];
+  // API categories: top | new | trending | all | rwa. A "+"-joined value
+  // (e.g. "trending+new+top") is split into separate calls and merged.
+  const VALID_CATEGORIES = new Set(["top", "new", "trending", "all", "rwa"]);
+  const categories = [...new Set(
+    String(s.category || "trending")
+      .split("+")
+      .map((c) => c.trim())
+      .filter((c) => VALID_CATEGORIES.has(c))
+  )];
+  if (categories.length === 0) categories.push("trending");
 
   const categoryResults = await Promise.allSettled(
     categories.map((cat) => fetchPoolDiscoveryPage({ page_size, filters, timeframe: s.timeframe, category: cat }))
@@ -778,6 +786,7 @@ function condensePool(p) {
     active_positions: p.active_positions,
     active_pct: fix(p.active_positions_pct, 1),
     open_positions: p.open_positions,
+    total_lps: p.total_lps,
     discord_signal: Boolean(p.discord_signal),
     discord_signal_count: p.discord_signal_count || 0,
     discord_signal_seen_count: p.discord_signal_seen_count || 0,

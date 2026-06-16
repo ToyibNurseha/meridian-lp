@@ -1343,6 +1343,7 @@ function formatHelpText() {
     "/settings — button menu for common config",
     "/setcfg <key> <value> — update persisted config",
     "/screen — refresh deterministic candidate list",
+    "/scan — run full screening cycle now (LLM — may deploy)",
     "/candidates — show latest cached candidates",
     "/deploy <n> — deploy candidate by cached index",
     "/briefing — morning briefing",
@@ -1628,6 +1629,21 @@ async function telegramHandler(msg) {
   if (text === "/screen") {
     try {
       await sendMessage(await runDeterministicScreen(5)).catch(() => {});
+    } catch (e) {
+      await sendMessage(`Error: ${e.message}`).catch(() => {});
+    }
+    return;
+  }
+
+  if (text === "/scan") {
+    if (_screeningBusy) {
+      await sendMessage("⏳ Screening already running — wait for it to finish.").catch(() => {});
+      return;
+    }
+    await sendMessage("🔍 Running full screening cycle (LLM — may deploy)...").catch(() => {});
+    try {
+      const report = await runScreeningCycle({ silent: false });
+      await sendMessage(report || "Screening done — no report.").catch(() => {});
     } catch (e) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     }
