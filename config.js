@@ -123,6 +123,9 @@ export const config = {
     minVolumeToRebalance:  u.minVolumeToRebalance  ?? 1000,
     stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -50,
     takeProfitPct:         u.takeProfitPct         ?? u.takeProfitFeePct ?? 5,
+    scarTakeProfitEnabled: u.scarTakeProfitEnabled ?? false, // if dipped to scarTriggerPct then recovered to scarTakeProfitPct, TP early
+    scarTriggerPct:        u.scarTriggerPct        ?? -10,   // trough must reach this (deep red) to arm scar TP
+    scarTakeProfitPct:     u.scarTakeProfitPct     ?? 2,     // recovery level that triggers the early TP
     minFeePerTvl24h:       u.minFeePerTvl24h       ?? 7,
     minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 60, // minutes before low yield can trigger close
     minSolToOpen:          u.minSolToOpen          ?? 0.55,

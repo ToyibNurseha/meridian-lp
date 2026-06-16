@@ -832,7 +832,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
             continue;
           }
           // Direct close for SL/TP — skip LLM, force notification regardless of live message state
-          if (exit.action === "STOP_LOSS" || exit.action === "TAKE_PROFIT") {
+          if (exit.action === "STOP_LOSS" || exit.action === "TAKE_PROFIT" || exit.action === "SCAR_TP") {
             log("state", `[PnL poll] Direct close: ${p.pair} — ${exit.action} (${exit.reason}) — no LLM`);
             setForceCloseNotify(true);
             await executeTool("close_position", { position_address: p.position, close_reason: exit.reason ?? exit.action.toLowerCase() }).catch((e) => {

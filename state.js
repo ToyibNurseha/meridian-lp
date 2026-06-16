@@ -104,6 +104,7 @@ export function trackPosition({
     closed_at: null,
     notes: [],
     peak_pnl_pct: 0,
+    trough_pnl_pct: 0,
     pending_peak_pnl_pct: null,
     pending_peak_started_at: null,
     pending_trailing_current_pnl_pct: null,
@@ -405,6 +406,12 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     log("state", `Position ${position_address} trailing TP activated (confirmed peak: ${pos.peak_pnl_pct}%)`);
   }
 
+  // Track trough (lowest PnL ever seen) — mirror of peak_pnl_pct, used by scar-recovery TP
+  if (!pnl_pct_suspicious && currentPnlPct != null && currentPnlPct < (pos.trough_pnl_pct ?? 0)) {
+    pos.trough_pnl_pct = currentPnlPct;
+    changed = true;
+  }
+
   // Update OOR state
   if (in_range === false && !pos.out_of_range_since) {
     pos.out_of_range_since = new Date().toISOString();
@@ -423,6 +430,23 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     return {
       action: "STOP_LOSS",
       reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.stopLossPct}%`,
+    };
+  }
+
+  // ── Scar-recovery TP ───────────────────────────────────────────
+  // If position dipped to/below scarTriggerPct (deep red) but clawed back to
+  // scarTakeProfitPct, grab the recovery instead of waiting for full TP — it
+  // already proved it can dump. (Mirror logic of trailing TP via the trough.)
+  if (
+    !pnl_pct_suspicious &&
+    mgmtConfig.scarTakeProfitEnabled &&
+    currentPnlPct != null &&
+    (pos.trough_pnl_pct ?? 0) <= mgmtConfig.scarTriggerPct &&
+    currentPnlPct >= mgmtConfig.scarTakeProfitPct
+  ) {
+    return {
+      action: "SCAR_TP",
+      reason: `Scar recovery: trough ${pos.trough_pnl_pct.toFixed(2)}% → recovered to ${currentPnlPct.toFixed(2)}% (>= ${mgmtConfig.scarTakeProfitPct}%) — take it`,
     };
   }
 

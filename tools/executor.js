@@ -219,6 +219,7 @@ function normalizeConfigValue(key, value) {
     "solMode",
     "darwinEnabled",
     "lpAgentRelayEnabled",
+    "scarTakeProfitEnabled",
   ]);
   const arrayKeys = new Set(["allowedLaunchpads", "blockedLaunchpads", "blockedTokenKeywords"]);
   const stringKeys = new Set([
@@ -390,6 +391,9 @@ const toolMap = {
       repeatDeployCooldownMinFeeEarnedPct: ["management", "repeatDeployCooldownMinFeeEarnedPct"],
       minVolumeToRebalance: ["management", "minVolumeToRebalance"],
       stopLossPct: ["management", "stopLossPct"],
+      scarTakeProfitEnabled: ["management", "scarTakeProfitEnabled"],
+      scarTriggerPct: ["management", "scarTriggerPct"],
+      scarTakeProfitPct: ["management", "scarTakeProfitPct"],
       takeProfitPct: ["management", "takeProfitPct"],
       takeProfitFeePct: ["management", "takeProfitPct"],
       trailingTakeProfit: ["management", "trailingTakeProfit"],
