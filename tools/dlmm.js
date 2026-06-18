@@ -800,20 +800,60 @@ export async function deployPosition({
         log("deploy", `Create tx ${i + 1}/${createTxArray.length}: ${txHash}`);
       }
 
-      // Phase 2: Add liquidity (may be multiple txs)
-      const addTxs = await pool.addLiquidityByStrategyChunkable({
-        positionPubKey: newPosition.publicKey,
-        user: wallet.publicKey,
-        totalXAmount: totalXLamports,
-        totalYAmount: totalYLamports,
-        strategy: { minBinId, maxBinId, strategyType },
-        slippage: 10, // 10%
-      });
-      const addTxArray = Array.isArray(addTxs) ? addTxs : [addTxs];
-      for (let i = 0; i < addTxArray.length; i++) {
-        const txHash = await sendAndConfirmTransaction(getConnection(), addTxArray[i], [wallet]);
-        txHashes.push(txHash);
-        log("deploy", `Add liquidity tx ${i + 1}/${addTxArray.length}: ${txHash}`);
+      // Phase 2: Add liquidity (may be multiple txs).
+      // On fast-moving pools the active bin drifts between Phase 1 and here,
+      // tripping ExceededBinSlippageTolerance (0x1774). Use a wider tolerance,
+      // and if the add ultimately fails, CLOSE the empty position created in
+      // Phase 1 so it doesn't orphan on-chain as a 0-SOL position.
+      try {
+        const addTxs = await pool.addLiquidityByStrategyChunkable({
+          positionPubKey: newPosition.publicKey,
+          user: wallet.publicKey,
+          totalXAmount: totalXLamports,
+          totalYAmount: totalYLamports,
+          strategy: { minBinId, maxBinId, strategyType },
+          slippage: 25, // 25% — tolerate active-bin drift on pumping pools
+        });
+        const addTxArray = Array.isArray(addTxs) ? addTxs : [addTxs];
+        for (let i = 0; i < addTxArray.length; i++) {
+          const txHash = await sendAndConfirmTransaction(getConnection(), addTxArray[i], [wallet]);
+          txHashes.push(txHash);
+          log("deploy", `Add liquidity tx ${i + 1}/${addTxArray.length}: ${txHash}`);
+        }
+      } catch (addErr) {
+        log("deploy_warn", `Add liquidity failed (${addErr.message}) — cleaning up empty position ${newPosition.publicKey.toString()} to avoid 0-SOL orphan`);
+        // Try removeLiquidity+close first (handles any partial fill), then a
+        // bare closePosition (handles the truly-empty case).
+        let cleaned = false;
+        try {
+          const rmTx = await pool.removeLiquidity({
+            user: wallet.publicKey,
+            position: newPosition.publicKey,
+            fromBinId: minBinId,
+            toBinId: maxBinId,
+            bps: new BN(10000),
+            shouldClaimAndClose: true,
+          });
+          for (const tx of Array.isArray(rmTx) ? rmTx : [rmTx]) {
+            const h = await sendAndConfirmTransaction(getConnection(), tx, [wallet]);
+            log("deploy", `Cleanup (removeLiquidity+close): ${h}`);
+          }
+          cleaned = true;
+        } catch (rmErr) {
+          try {
+            const closeTx = await pool.closePosition({
+              owner: wallet.publicKey,
+              position: { publicKey: newPosition.publicKey },
+            });
+            const h = await sendAndConfirmTransaction(getConnection(), closeTx, [wallet]);
+            log("deploy", `Cleanup (closePosition): ${h}`);
+            cleaned = true;
+          } catch (closeErr) {
+            log("deploy_error", `Could not clean up empty position ${newPosition.publicKey.toString()} (${closeErr.message}) — MANUAL CLEANUP NEEDED`);
+          }
+        }
+        _positionsCacheAt = 0;
+        throw new Error(`Wide-range deploy failed during add-liquidity: ${addErr.message}${cleaned ? " (empty position cleaned up)" : " (ORPHAN — manual cleanup needed)"}`);
       }
     } else {
       // ── Standard Path (≤69 bins) ─────────────────────────────────
