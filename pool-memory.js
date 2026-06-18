@@ -337,6 +337,22 @@ export function isRecentlyDeployed(poolAddress, hours) {
   return new Date(entry.last_deployed_at).getTime() > cutoff;
 }
 
+/**
+ * True if the most recent close in this pool was a loss — either a stop-loss
+ * close or PnL below lossThresholdPct (default -1%). Used to gate the
+ * recent-deploy cooldown so winners can be redeployed immediately.
+ */
+export function lastCloseWasLoss(poolAddress, lossThresholdPct = -1) {
+  if (!poolAddress) return false;
+  const db = load();
+  const entry = db[poolAddress];
+  const last = entry?.deploys?.[entry.deploys.length - 1];
+  if (!last) return false;
+  const isSL = (last.close_reason || "").toLowerCase().includes("stop loss");
+  const isLoss = Number.isFinite(last.pnl_pct) && last.pnl_pct < lossThresholdPct;
+  return isSL || isLoss;
+}
+
 // ─── Read ──────────────────────────────────────────────────────
 
 /**

@@ -120,6 +120,8 @@ export const config = {
     repeatDeployCooldownMinFeeEarnedPct: u.repeatDeployCooldownMinFeeEarnedPct ?? u.repeatDeployCooldownMinFeeYieldPct ?? 0,
     // Screener: skip pool if closed within this many hours (any close reason)
     recentDeployCooldownHours: u.recentDeployCooldownHours ?? 2,
+    recentDeployCooldownOnlyOnLoss: u.recentDeployCooldownOnlyOnLoss ?? false, // only block recent redeploy if last close was a loss
+    recentDeployLossThresholdPct: u.recentDeployLossThresholdPct ?? -1,        // last close counts as loss if pnl below this (SL always counts)
     minVolumeToRebalance:  u.minVolumeToRebalance  ?? 1000,
     stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -50,
     takeProfitPct:         u.takeProfitPct         ?? u.takeProfitFeePct ?? 5,

@@ -220,6 +220,7 @@ function normalizeConfigValue(key, value) {
     "darwinEnabled",
     "lpAgentRelayEnabled",
     "scarTakeProfitEnabled",
+    "recentDeployCooldownOnlyOnLoss",
   ]);
   const arrayKeys = new Set(["allowedLaunchpads", "blockedLaunchpads", "blockedTokenKeywords"]);
   const stringKeys = new Set([
@@ -391,6 +392,9 @@ const toolMap = {
       repeatDeployCooldownMinFeeEarnedPct: ["management", "repeatDeployCooldownMinFeeEarnedPct"],
       minVolumeToRebalance: ["management", "minVolumeToRebalance"],
       stopLossPct: ["management", "stopLossPct"],
+      recentDeployCooldownHours: ["management", "recentDeployCooldownHours"],
+      recentDeployCooldownOnlyOnLoss: ["management", "recentDeployCooldownOnlyOnLoss"],
+      recentDeployLossThresholdPct: ["management", "recentDeployLossThresholdPct"],
       scarTakeProfitEnabled: ["management", "scarTakeProfitEnabled"],
       scarTriggerPct: ["management", "scarTriggerPct"],
       scarTakeProfitPct: ["management", "scarTakeProfitPct"],

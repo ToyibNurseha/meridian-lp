@@ -2,7 +2,7 @@ import { config } from "../config.js";
 import { isBlacklisted } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
-import { isBaseMintOnCooldown, isPoolOnCooldown, isRecentlyDeployed } from "../pool-memory.js";
+import { isBaseMintOnCooldown, isPoolOnCooldown, isRecentlyDeployed, lastCloseWasLoss } from "../pool-memory.js";
 import { confirmIndicatorPreset } from "./chart-indicators.js";
 import { getAgentMeridianBase, getAgentMeridianHeaders } from "./agent-meridian.js";
 
@@ -635,9 +635,16 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       }
       const recentCooldownH = config.management.recentDeployCooldownHours;
       if (recentCooldownH && isRecentlyDeployed(p.pool, recentCooldownH)) {
-        log("screening", `Filtered recently deployed pool ${p.name} (${p.pool.slice(0, 8)}) — closed within ${recentCooldownH}h`);
-        pushFilteredReason(filteredOut, p, `recently deployed (within ${recentCooldownH}h)`);
-        return false;
+        // When recentDeployCooldownOnlyOnLoss is set, only block a recent redeploy
+        // if the last close was a loss (SL or PnL below threshold). Winners redeploy freely.
+        const onlyOnLoss = config.management.recentDeployCooldownOnlyOnLoss;
+        const lossThreshold = config.management.recentDeployLossThresholdPct ?? -1;
+        if (!onlyOnLoss || lastCloseWasLoss(p.pool, lossThreshold)) {
+          const why = onlyOnLoss ? `last close was a loss, within ${recentCooldownH}h` : `recently deployed (within ${recentCooldownH}h)`;
+          log("screening", `Filtered recently deployed pool ${p.name} (${p.pool.slice(0, 8)}) — ${why}`);
+          pushFilteredReason(filteredOut, p, why);
+          return false;
+        }
       }
       return true;
     })
