@@ -221,6 +221,9 @@ function normalizeConfigValue(key, value) {
     "lpAgentRelayEnabled",
     "scarTakeProfitEnabled",
     "recentDeployCooldownOnlyOnLoss",
+    "ilExitEnabled",
+    "chartIndicatorsEnabled",
+    "requireAllIntervals",
   ]);
   const arrayKeys = new Set(["allowedLaunchpads", "blockedLaunchpads", "blockedTokenKeywords"]);
   const stringKeys = new Set([
@@ -241,6 +244,8 @@ function normalizeConfigValue(key, value) {
     "pnlRpcUrl",
     "gmgnFeeSource",
     "gmgnApiKey",
+    "indicatorEntryPreset",
+    "indicatorExitPreset",
   ]);
   if (value === null) return null;
   if (booleanKeys.has(key)) return coerceBoolean(value, key);
