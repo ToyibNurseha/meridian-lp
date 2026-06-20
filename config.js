@@ -130,6 +130,12 @@ export const config = {
     scarTakeProfitPct:     u.scarTakeProfitPct     ?? 2,     // recovery level that triggers the early TP
     minFeePerTvl24h:       u.minFeePerTvl24h       ?? 7,
     minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 60, // minutes before low yield can trigger close
+    // fee-vs-IL exit (Rule 6): cut structural bleeders where IL outpaces fees, before SL.
+    // Fires when the price/IL loss (fees stripped out) is deep AND lifetime fees cover < K of it.
+    ilExitEnabled:         u.ilExitEnabled         ?? false,
+    ilExitMinAgeMin:       u.ilExitMinAgeMin       ?? 45,  // min position age before this can fire
+    ilExitMaxPriceLossPct: u.ilExitMaxPriceLossPct ?? -8,  // pricePnl (pnl minus feePct) must be <= this
+    ilExitCoverageK:       u.ilExitCoverageK       ?? 0.5, // close if feePct < |pricePnl| * K
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,

@@ -222,6 +222,28 @@ function evaluatePreset(side, preset, payload) {
             reason: "Price rejected below a key Fibonacci level",
             signal: summary,
           };
+    case "bb_top_reject": {
+      // Catastrophic-entry filter: allow entry UNLESS price is extended at the top
+      // (close >= BB upper band OR RSI overbought). Missing data => pass (never hard-block).
+      const atTop =
+        (close != null && upperBand != null && close >= upperBand) ||
+        (rsi != null && rsi >= overbought);
+      return side === "entry"
+        ? {
+            confirmed: !atTop,
+            reason: atTop
+              ? `Rejected: extended top (close ${close ?? "n/a"} >= BB upper ${upperBand ?? "n/a"} or RSI ${rsi ?? "n/a"} >= ${overbought})`
+              : `OK: not extended (close ${close ?? "n/a"} < BB upper ${upperBand ?? "n/a"}, RSI ${rsi ?? "n/a"})`,
+            signal: summary,
+          }
+        : {
+            confirmed: atTop,
+            reason: atTop
+              ? `Exit: extended top (close >= BB upper or RSI >= ${overbought})`
+              : `Hold: not extended`,
+            signal: summary,
+          };
+    }
     default:
       return {
         confirmed: false,

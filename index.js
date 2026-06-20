@@ -1001,6 +1001,33 @@ function getDeterministicCloseRule(position, managementConfig) {
   ) {
     return { action: "CLOSE", rule: 5, reason: "low yield" };
   }
+  // Rule 6 — fee-vs-IL: cut structural bleeders where IL outpaces fee income, before the SL.
+  // Strips fee income from pnl to isolate the price/IL loss, then closes only when lifetime
+  // fees cover less than K of that loss. A healthy fee-printer (down on price but earning
+  // enough) stays open. solMode only — feePct is computed from SOL-denominated unclaimed fees.
+  if (
+    !pnlSuspect &&
+    managementConfig.ilExitEnabled &&
+    managementConfig.solMode &&
+    position.pnl_pct != null &&
+    tracked?.amount_sol > 0 &&
+    (position.age_minutes ?? 0) >= managementConfig.ilExitMinAgeMin
+  ) {
+    const feesSol = position.unclaimed_fees_usd ?? 0; // solMode: SOL units; claimed omitted (rare)
+    const feePct = (feesSol / tracked.amount_sol) * 100;
+    const pricePnlPct = position.pnl_pct - feePct;
+    if (
+      pricePnlPct <= managementConfig.ilExitMaxPriceLossPct &&
+      feePct < Math.abs(pricePnlPct) * managementConfig.ilExitCoverageK
+    ) {
+      const coverage = (feePct / Math.abs(pricePnlPct)).toFixed(2);
+      return {
+        action: "CLOSE",
+        rule: 6,
+        reason: `fee-vs-IL: IL ${pricePnlPct.toFixed(1)}% vs fees ${feePct.toFixed(1)}% (coverage ${coverage} < ${managementConfig.ilExitCoverageK})`,
+      };
+    }
+  }
   return null;
 }
 
@@ -1110,6 +1137,10 @@ function settingValue(key) {
     repeatDeployCooldownTriggerCount: config.management.repeatDeployCooldownTriggerCount,
     repeatDeployCooldownHours: config.management.repeatDeployCooldownHours,
     repeatDeployCooldownMinFeeEarnedPct: config.management.repeatDeployCooldownMinFeeEarnedPct,
+    ilExitEnabled: config.management.ilExitEnabled,
+    ilExitMinAgeMin: config.management.ilExitMinAgeMin,
+    ilExitMaxPriceLossPct: config.management.ilExitMaxPriceLossPct,
+    ilExitCoverageK: config.management.ilExitCoverageK,
     managementIntervalMin: config.schedule.managementIntervalMin,
     screeningIntervalMin: config.schedule.screeningIntervalMin,
     indicatorEntryPreset: config.indicators.entryPreset,
@@ -1188,6 +1219,10 @@ function renderSettingsMenu(page = "main") {
       stepButtons("repeatDeployCooldownTriggerCount", "Repeat count", 1, { digits: 0 }),
       stepButtons("repeatDeployCooldownHours", "Repeat hrs", 1, { digits: 0 }),
       stepButtons("repeatDeployCooldownMinFeeEarnedPct", "Fee earned %", 0.1, { digits: 1 }),
+      [toggleButton("ilExitEnabled", "Fee-vs-IL exit")],
+      stepButtons("ilExitMaxPriceLossPct", "IL loss %", 1, { digits: 0 }),
+      stepButtons("ilExitCoverageK", "IL coverage K", 0.05, { digits: 2 }),
+      stepButtons("ilExitMinAgeMin", "IL min age", 5, { digits: 0 }),
     ];
   } else if (page === "screen") {
     rows = [
@@ -1214,6 +1249,10 @@ function renderSettingsMenu(page = "main") {
         settingButton("Entry: ST", "cfg:set:indicatorEntryPreset:supertrend_break"),
         settingButton("Entry: RSI", "cfg:set:indicatorEntryPreset:rsi_reversal"),
         settingButton("Entry: ST/RSI", "cfg:set:indicatorEntryPreset:supertrend_or_rsi"),
+      ],
+      [
+        settingButton("Entry: BB-top reject", "cfg:set:indicatorEntryPreset:bb_top_reject"),
+        settingButton("Entry: BB+RSI", "cfg:set:indicatorEntryPreset:bb_plus_rsi"),
       ],
       [
         settingButton("Exit: ST", "cfg:set:indicatorExitPreset:supertrend_break"),
@@ -1301,6 +1340,9 @@ async function applySettingsMenuCallback(msg) {
     if (key === "repeatDeployCooldownTriggerCount") value = Math.max(1, Math.round(value));
     if (key === "repeatDeployCooldownHours") value = Math.max(0, Math.round(value));
     if (key === "repeatDeployCooldownMinFeeEarnedPct") value = Math.max(0, value);
+    if (key === "ilExitMinAgeMin") value = Math.max(0, Math.round(value));
+    if (key === "ilExitCoverageK") value = Math.max(0, value);
+    if (key === "ilExitMaxPriceLossPct") value = Math.min(0, value);
     if (["minBinsBelow", "maxBinsBelow", "defaultBinsBelow"].includes(key)) value = Math.max(35, Math.round(value));
     if (["deployAmountSol", "gasReserve", "maxDeployAmount"].includes(key)) value = Math.max(0, value);
   } else if (action === "set") {
