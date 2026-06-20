@@ -186,6 +186,10 @@ export const config = {
     minSamples:     u.darwinMinSamples  ?? 10,
   },
 
+  // Auto-evolve screening thresholds every N closes (lessons.js). Default OFF —
+  // when off, only manual /evolve and Darwinian weights run; thresholds stay put.
+  autoEvolveEnabled: u.autoEvolveEnabled ?? false,
+
   // ─── Common Token Mints ────────────────
   tokens: {
     SOL:  "So11111111111111111111111111111111111111112",
