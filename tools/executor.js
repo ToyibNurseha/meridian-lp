@@ -438,6 +438,7 @@ const toolMap = {
       feeHarvestEnabled: ["management", "feeHarvestEnabled"],
       feeHarvestMinAgeMin: ["management", "feeHarvestMinAgeMin"],
       feeHarvestMinFeePct: ["management", "feeHarvestMinFeePct"],
+      feeHarvestMinNetPct: ["management", "feeHarvestMinNetPct"],
       // risk
       maxPositions: ["risk", "maxPositions"],
       maxDeployAmount: ["risk", "maxDeployAmount"],

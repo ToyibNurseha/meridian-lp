@@ -820,10 +820,11 @@ Summarize the current portfolio health, total fees earned, and performance of al
         } finally {
           _managementBusy = false;
         }
-        // Refill the freed slot fast — guarded so the opportunity/management
-        // pollers can't be spammed by a burst of closes.
+        // Refill the freed slot immediately — a close genuinely frees a slot, so screen now
+        // (no time-gate). _screeningBusy prevents overlap; one-action-per-tick caps the rate.
         const afterCount = (await getMyPositions({ force: true, silent: true }).catch(() => null))?.positions?.length ?? 0;
-        if (afterCount < config.risk.maxPositions && Date.now() - _screeningLastTriggered > 5 * 60 * 1000) {
+        if (afterCount < config.risk.maxPositions) {
+          log("cron", `Post-close: ${afterCount}/${config.risk.maxPositions} positions — triggering screening`);
           runScreeningCycle().catch((e) => log("cron_error", `Post-close screening failed: ${e.message}`));
         }
         break; // one action per tick
@@ -1039,12 +1040,14 @@ function getDeterministicCloseRule(position, managementConfig) {
   // erodes it. Models the Bengbeng pattern (median hold ~6m, many small fee-carried wins): get
   // in, capture the fee burst, get out while still in profit. solMode only — feePct from
   // SOL-denominated unclaimed fees. Off by default; pairs with a narrow range so it fires fast.
+  // pnl gate is feeHarvestMinNetPct (default 0) — set it above the expected base->SOL swap
+  // cost (Jupiter referral + slippage) so a thin +pnl that the close swap would erase is held.
   if (
     !pnlSuspect &&
     managementConfig.feeHarvestEnabled &&
     managementConfig.solMode &&
     position.pnl_pct != null &&
-    position.pnl_pct > 0 &&
+    position.pnl_pct >= managementConfig.feeHarvestMinNetPct &&
     tracked?.amount_sol > 0 &&
     (position.age_minutes ?? 0) >= managementConfig.feeHarvestMinAgeMin
   ) {

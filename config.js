@@ -143,6 +143,7 @@ export const config = {
     feeHarvestEnabled:     u.feeHarvestEnabled     ?? false,
     feeHarvestMinAgeMin:   u.feeHarvestMinAgeMin   ?? 10,  // min position age before harvest can fire
     feeHarvestMinFeePct:   u.feeHarvestMinFeePct   ?? 1.0, // close (in profit) once unclaimed fees >= this % of deposit
+    feeHarvestMinNetPct:   u.feeHarvestMinNetPct   ?? 0,   // min pnl% to harvest — set above base->SOL swap cost (Jupiter referral+slippage)
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,
