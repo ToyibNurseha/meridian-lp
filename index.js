@@ -1035,6 +1035,29 @@ function getDeterministicCloseRule(position, managementConfig) {
       };
     }
   }
+  // Rule 7 — fee-harvest time-stop: lock a winner once it has printed enough fee, before IL
+  // erodes it. Models the Bengbeng pattern (median hold ~6m, many small fee-carried wins): get
+  // in, capture the fee burst, get out while still in profit. solMode only — feePct from
+  // SOL-denominated unclaimed fees. Off by default; pairs with a narrow range so it fires fast.
+  if (
+    !pnlSuspect &&
+    managementConfig.feeHarvestEnabled &&
+    managementConfig.solMode &&
+    position.pnl_pct != null &&
+    position.pnl_pct > 0 &&
+    tracked?.amount_sol > 0 &&
+    (position.age_minutes ?? 0) >= managementConfig.feeHarvestMinAgeMin
+  ) {
+    const feesSol = position.unclaimed_fees_usd ?? 0; // solMode: SOL units
+    const feePct = (feesSol / tracked.amount_sol) * 100;
+    if (feePct >= managementConfig.feeHarvestMinFeePct) {
+      return {
+        action: "CLOSE",
+        rule: 7,
+        reason: `fee-harvest: ${feePct.toFixed(2)}% fees @ ${position.age_minutes ?? 0}m, pnl +${position.pnl_pct.toFixed(1)}% — locking win`,
+      };
+    }
+  }
   return null;
 }
 

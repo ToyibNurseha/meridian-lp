@@ -222,6 +222,7 @@ function normalizeConfigValue(key, value) {
     "scarTakeProfitEnabled",
     "recentDeployCooldownOnlyOnLoss",
     "ilExitEnabled",
+    "feeHarvestEnabled",
     "chartIndicatorsEnabled",
     "requireAllIntervals",
   ]);
@@ -434,6 +435,9 @@ const toolMap = {
       ilExitMinAgeMin: ["management", "ilExitMinAgeMin"],
       ilExitMaxPriceLossPct: ["management", "ilExitMaxPriceLossPct"],
       ilExitCoverageK: ["management", "ilExitCoverageK"],
+      feeHarvestEnabled: ["management", "feeHarvestEnabled"],
+      feeHarvestMinAgeMin: ["management", "feeHarvestMinAgeMin"],
+      feeHarvestMinFeePct: ["management", "feeHarvestMinFeePct"],
       // risk
       maxPositions: ["risk", "maxPositions"],
       maxDeployAmount: ["risk", "maxDeployAmount"],

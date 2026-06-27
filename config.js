@@ -139,6 +139,10 @@ export const config = {
     ilExitMinAgeMin:       u.ilExitMinAgeMin       ?? 45,  // min position age before this can fire
     ilExitMaxPriceLossPct: u.ilExitMaxPriceLossPct ?? -8,  // pricePnl (pnl minus feePct) must be <= this
     ilExitCoverageK:       u.ilExitCoverageK       ?? 0.5, // close if feePct < |pricePnl| * K
+    // Fee-harvest time-stop (Rule 7): lock a winner once it has printed enough fee, before IL erodes it.
+    feeHarvestEnabled:     u.feeHarvestEnabled     ?? false,
+    feeHarvestMinAgeMin:   u.feeHarvestMinAgeMin   ?? 10,  // min position age before harvest can fire
+    feeHarvestMinFeePct:   u.feeHarvestMinFeePct   ?? 1.0, // close (in profit) once unclaimed fees >= this % of deposit
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,
