@@ -431,13 +431,21 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     }
   }
 
-  // ── Out of range too long ──────────────────────────────────────
+  // ── Out of range too long (directional wait) ───────────────────
+  // OOR-down (price below range) in single-down = holding base; allow a separate, usually longer
+  // wait so a shallow dip can recover into range before we realize the loss + swap cost. Deep
+  // dumps are still capped fast by stop-loss + Rule 6 IL. OOR-up = idle SOL → keep the short wait.
   if (pos.out_of_range_since) {
     const minutesOOR = Math.floor((Date.now() - new Date(pos.out_of_range_since).getTime()) / 60000);
-    if (minutesOOR >= mgmtConfig.outOfRangeWaitMinutes) {
+    const { active_bin, lower_bin } = positionData;
+    const oorDown = active_bin != null && lower_bin != null && active_bin < lower_bin;
+    const oorLimit = (oorDown && mgmtConfig.outOfRangeWaitMinutesDown != null)
+      ? mgmtConfig.outOfRangeWaitMinutesDown
+      : mgmtConfig.outOfRangeWaitMinutes;
+    if (minutesOOR >= oorLimit) {
       return {
         action: "OUT_OF_RANGE",
-        reason: `Out of range for ${minutesOOR}m (limit: ${mgmtConfig.outOfRangeWaitMinutes}m)`,
+        reason: `Out of range (${oorDown ? "down" : "up"}) for ${minutesOOR}m (limit: ${oorLimit}m)`,
       };
     }
   }

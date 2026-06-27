@@ -788,7 +788,12 @@ Summarize the current portfolio health, total fees earned, and performance of al
   const confirmTicks = Math.max(1, Number(config.pnl.confirmTicks ?? 2));
   let _pnlPollBusy = false;
   const pnlPollInterval = setInterval(async () => {
-    if (_managementBusy || _screeningBusy || _pnlPollBusy) return;
+    // Exit poller is the highest-priority path (deterministic, no LLM) — it must NOT be blocked
+    // by a running screening cycle, or a fast dump can bleed past stop-loss while screening holds
+    // the lock (observed: SL-eligible position couldn't close for ~66s during a post-close screen).
+    // Only mutually-exclude with management closes and itself; concurrent screen-deploy is safe
+    // (different position; deploy re-checks count/balance with force).
+    if (_managementBusy || _pnlPollBusy) return;
     if (getTrackedPositions(true).length === 0) return;
     _pnlPollBusy = true;
     try {

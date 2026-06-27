@@ -115,7 +115,10 @@ export const config = {
     outOfRangeBinsToClose: u.outOfRangeBinsToClose ?? 10,
     outOfRangeWaitMinutes: u.outOfRangeWaitMinutes ?? 30,
     oorCooldownTriggerCount: u.oorCooldownTriggerCount ?? 3,
+    outOfRangeWaitMinutesDown: u.outOfRangeWaitMinutesDown ?? u.outOfRangeWaitMinutes ?? 30, // OOR-down wait (price below range); falls back to the symmetric wait
     oorCooldownHours:       u.oorCooldownHours       ?? 12,
+    bigLossBlacklistPct:    u.bigLossBlacklistPct    ?? -10, // a single close <= this % cools down pool+mint
+    bigLossBlacklistHours:  u.bigLossBlacklistHours  ?? 24,  // for this many hours (0 disables)
     repeatDeployCooldownEnabled: u.repeatDeployCooldownEnabled ?? true,
     repeatDeployCooldownTriggerCount: u.repeatDeployCooldownTriggerCount ?? 3,
     repeatDeployCooldownHours: u.repeatDeployCooldownHours ?? 12,
