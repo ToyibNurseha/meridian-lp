@@ -114,9 +114,11 @@ export async function recordPerformance(perf) {
   }
 
   const pnl_usd = (perf.final_value_usd + perf.fees_earned_usd) - perf.initial_value_usd;
-  const pnl_pct = perf.initial_value_usd > 0
-    ? (pnl_usd / perf.initial_value_usd) * 100
-    : 0;
+  // Prefer the authoritative PnL% computed at close (SOL-denominated in solMode) so stats
+  // match the metric we optimize; only derive from USD when the caller didn't supply it.
+  const pnl_pct = Number.isFinite(perf.pnl_pct)
+    ? perf.pnl_pct
+    : (perf.initial_value_usd > 0 ? (pnl_usd / perf.initial_value_usd) * 100 : 0);
   const range_efficiency = perf.minutes_held > 0
     ? (perf.minutes_in_range / perf.minutes_held) * 100
     : 0;
@@ -139,6 +141,7 @@ export async function recordPerformance(perf) {
     signal_snapshot: signalSnapshot,
     pnl_usd: Math.round(pnl_usd * 100) / 100,
     pnl_pct: Math.round(pnl_pct * 100) / 100,
+    pnl_sol: Number.isFinite(perf.pnl_sol) ? Math.round(perf.pnl_sol * 1e6) / 1e6 : null,
     range_efficiency: Math.round(range_efficiency * 10) / 10,
     recorded_at: new Date().toISOString(),
   };
@@ -167,6 +170,7 @@ export async function recordPerformance(perf) {
       closed_at: entry.recorded_at,
       pnl_pct: entry.pnl_pct,
       pnl_usd: entry.pnl_usd,
+      pnl_sol: entry.pnl_sol,
       range_efficiency: entry.range_efficiency,
       minutes_held: perf.minutes_held,
       fees_earned_usd: perf.fees_earned_usd,

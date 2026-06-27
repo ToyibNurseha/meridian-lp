@@ -1054,7 +1054,7 @@ function getDeterministicCloseRule(position, managementConfig) {
       return {
         action: "CLOSE",
         rule: 7,
-        reason: `fee-harvest: ${feePct.toFixed(2)}% fees @ ${position.age_minutes ?? 0}m, pnl +${position.pnl_pct.toFixed(1)}% — locking win`,
+        reason: `fee-harvest: ${feePct.toFixed(2)}% fees @ ${position.age_minutes ?? 0}m (trigger pnl +${position.pnl_pct.toFixed(2)}%)`,
       };
     }
   }

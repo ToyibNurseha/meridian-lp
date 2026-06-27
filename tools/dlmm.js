@@ -1734,8 +1734,11 @@ export async function closePosition({ position_address, reason }) {
           organic_score: tracked.organic_score || null,
           amount_sol: tracked.amount_sol,
           fees_earned_usd: feesUsd,
+          fees_earned_sol: feesSol,
           final_value_usd: finalValueUsd,
           initial_value_usd: initialUsd,
+          pnl_pct: pnlPct,   // authoritative (SOL-denominated in solMode) — lessons/pool-memory use this
+          pnl_sol: pnlSol,
           minutes_in_range: minutesHeld - minutesOOR,
           minutes_held: minutesHeld,
           close_reason: reason || "agent decision",
@@ -2054,8 +2057,11 @@ export async function closePosition({ position_address, reason }) {
         organic_score: tracked.organic_score || null,
         amount_sol: tracked.amount_sol,
         fees_earned_usd: feesUsd,
+        fees_earned_sol: feesSol,
         final_value_usd: finalValueUsd,
         initial_value_usd: initialUsd,
+        pnl_pct: pnlPct,   // authoritative (SOL-denominated in solMode) — lessons/pool-memory use this
+        pnl_sol: pnlSol,
         minutes_in_range: minutesHeld - minutesOOR,
         minutes_held: minutesHeld,
         close_reason: reason || "agent decision",

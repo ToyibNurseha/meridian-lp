@@ -494,10 +494,19 @@ export async function notifyClose({ pair, pnlUsd, pnlPct, pnlSol, depositedSol, 
   const pnlLine = pnlSol != null
     ? `PnL: ${sign}◎${Math.abs(pnlSol).toFixed(5)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)`
     : `PnL: ${sign}◎${Math.abs(pnlUsd ?? 0).toFixed(5)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)`;
+  // Rule-triggered closes embed the trigger-tick PnL ("trigger pnl +X%"); show how far the
+  // realized close drifted from it (close slippage on the multi-step withdraw+swap).
+  const triggerMatch = typeof closeReason === "string" ? closeReason.match(/trigger pnl ([+-]?[\d.]+)%/i) : null;
+  const triggerPct = triggerMatch ? parseFloat(triggerMatch[1]) : null;
+  const fmtPct = (n) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
+  const slipLine = (triggerPct != null && pnlPct != null)
+    ? `📸 Trigger ${fmtPct(triggerPct)} → Realized ${fmtPct(pnlPct)} (Δ ${fmtPct(pnlPct - triggerPct)})`
+    : null;
   const ilSol = (withdrawnSol != null && depositedSol != null) ? (withdrawnSol - depositedSol) : null;
   const lines = [
     `🔒 <b>Closed</b> ${pair}`,
     pnlLine,
+    slipLine,
     depositedSol != null ? `💰 Deposited: ◎${depositedSol.toFixed(4)}` : null,
     withdrawnSol != null ? `💸 Withdrawn: ◎${withdrawnSol.toFixed(4)}` : null,
     (feesSol != null || ilSol != null)
