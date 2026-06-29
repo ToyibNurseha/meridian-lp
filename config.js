@@ -147,6 +147,16 @@ export const config = {
     feeHarvestMinAgeMin:   u.feeHarvestMinAgeMin   ?? 10,  // min position age before harvest can fire
     feeHarvestMinFeePct:   u.feeHarvestMinFeePct   ?? 1.0, // close (in profit) once unclaimed fees >= this % of deposit
     feeHarvestMinNetPct:   u.feeHarvestMinNetPct   ?? 0,   // min pnl% to harvest — set above base->SOL swap cost (Jupiter referral+slippage)
+    // RSI+MACD exit: time the rebound after a dump. Fires when RSI >= threshold AND MACD
+    // histogram is green (> 0), i.e. momentum has turned up — grab the bounce top. PnL-gated
+    // (>= rsiMacdExitMinPnlPct) so it never realizes a loss. MACD computed locally from candles
+    // (the chart-indicators API does not return MACD). Off by default; cached per mint.
+    rsiMacdExitEnabled:    u.rsiMacdExitEnabled    ?? false,
+    rsiMacdExitRsi:        u.rsiMacdExitRsi        ?? 70,         // RSI must be >= this
+    rsiMacdExitMinPnlPct:  u.rsiMacdExitMinPnlPct  ?? 0,          // only fire when pnl_pct >= this (0 = breakeven+)
+    rsiMacdExitMinAgeMin:  u.rsiMacdExitMinAgeMin  ?? 5,          // min position age (min-duration gate, RSI_MACD only)
+    rsiMacdExitInterval:   u.rsiMacdExitInterval   ?? "5_MINUTE", // candle interval for the exit check
+    rsiMacdExitCacheSec:   u.rsiMacdExitCacheSec   ?? 60,         // per-mint indicator cache TTL (avoid hammering the API on the 3s poller)
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,

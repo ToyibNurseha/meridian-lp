@@ -223,6 +223,7 @@ function normalizeConfigValue(key, value) {
     "recentDeployCooldownOnlyOnLoss",
     "ilExitEnabled",
     "feeHarvestEnabled",
+    "rsiMacdExitEnabled",
     "chartIndicatorsEnabled",
     "requireAllIntervals",
   ]);
@@ -247,6 +248,7 @@ function normalizeConfigValue(key, value) {
     "gmgnApiKey",
     "indicatorEntryPreset",
     "indicatorExitPreset",
+    "rsiMacdExitInterval",
   ]);
   if (value === null) return null;
   if (booleanKeys.has(key)) return coerceBoolean(value, key);
@@ -442,6 +444,12 @@ const toolMap = {
       feeHarvestMinAgeMin: ["management", "feeHarvestMinAgeMin"],
       feeHarvestMinFeePct: ["management", "feeHarvestMinFeePct"],
       feeHarvestMinNetPct: ["management", "feeHarvestMinNetPct"],
+      rsiMacdExitEnabled: ["management", "rsiMacdExitEnabled"],
+      rsiMacdExitRsi: ["management", "rsiMacdExitRsi"],
+      rsiMacdExitMinPnlPct: ["management", "rsiMacdExitMinPnlPct"],
+      rsiMacdExitMinAgeMin: ["management", "rsiMacdExitMinAgeMin"],
+      rsiMacdExitInterval: ["management", "rsiMacdExitInterval"],
+      rsiMacdExitCacheSec: ["management", "rsiMacdExitCacheSec"],
       // risk
       maxPositions: ["risk", "maxPositions"],
       maxDeployAmount: ["risk", "maxDeployAmount"],

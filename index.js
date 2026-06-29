@@ -8,6 +8,7 @@ import { log } from "./logger.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates, degenScore } from "./tools/screening.js";
+import { checkRsiMacdExit } from "./tools/indicator-exit.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
 import { executeTool, registerCronRestarter, setForceCloseNotify } from "./tools/executor.js";
@@ -808,6 +809,20 @@ Summarize the current portfolio health, total fees earned, and performance of al
         let signal = null, reason = null, rule = "exit";
         if (exit) { signal = exit.action; reason = exit.reason; }
         else if (closeRule) { signal = `RULE_${closeRule.rule}`; reason = closeRule.reason; rule = closeRule.rule; }
+        // RSI+MACD rebound exit (async, cached per mint) — only when no other rule fired. PnL-gated
+        // (>= rsiMacdExitMinPnlPct, never realizes a loss) and age-gated (min-duration, RSI_MACD
+        // only). Catches bounce tops that fixed-TP/trailing/OOR would otherwise miss.
+        else if (
+          config.management.rsiMacdExitEnabled &&
+          p.base_mint &&
+          !p.pnl_pct_suspicious &&
+          p.pnl_pct != null &&
+          p.pnl_pct >= (config.management.rsiMacdExitMinPnlPct ?? 0) &&
+          (p.age_minutes ?? 0) >= (config.management.rsiMacdExitMinAgeMin ?? 5)
+        ) {
+          const ind = await checkRsiMacdExit({ mint: p.base_mint });
+          if (ind.exit) { signal = "RSI_MACD_EXIT"; reason = ind.reason; }
+        }
 
         // Require N consecutive confirming ticks before acting.
         const { fire } = registerExitSignal(p.position, signal, confirmTicks);
