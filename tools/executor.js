@@ -413,6 +413,7 @@ const toolMap = {
       scarTriggerPct: ["management", "scarTriggerPct"],
       scarTakeProfitPct: ["management", "scarTakeProfitPct"],
       takeProfitPct: ["management", "takeProfitPct"],
+      minPositionDurationMin: ["management", "minPositionDurationMin"],
       takeProfitFeePct: ["management", "takeProfitPct"],
       trailingTakeProfit: ["management", "trailingTakeProfit"],
       trailingTriggerPct: ["management", "trailingTriggerPct"],

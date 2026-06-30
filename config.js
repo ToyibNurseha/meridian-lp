@@ -131,6 +131,11 @@ export const config = {
     minVolumeToRebalance:  u.minVolumeToRebalance  ?? 1000,
     stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -50,
     takeProfitPct:         u.takeProfitPct         ?? u.takeProfitFeePct ?? 5,
+    // Min-duration gate: suppress ALL exits (and peak/trough/trailing tracking) for the first
+    // N minutes after deploy — EXCEPT stop-loss, which always fires. Prevents premature closes
+    // from the post-deploy PnL glitch (position reads a phantom +/-% for a few seconds while
+    // liquidity settles / active bin re-prices). 0 disables the gate.
+    minPositionDurationMin: u.minPositionDurationMin ?? 5,
     scarTakeProfitEnabled: u.scarTakeProfitEnabled ?? false, // if dipped to scarTriggerPct then recovered to scarTakeProfitPct, TP early
     scarTriggerPct:        u.scarTriggerPct        ?? -10,   // trough must reach this (deep red) to arm scar TP
     scarTakeProfitPct:     u.scarTakeProfitPct     ?? 2,     // recovery level that triggers the early TP

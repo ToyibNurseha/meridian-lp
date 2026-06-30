@@ -365,15 +365,21 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
 
   let changed = false;
 
+  // Min-duration gate: during the first N minutes after deploy the PnL can be a transient
+  // phantom (liquidity settling / active bin re-pricing). Don't track peak/trough or activate
+  // trailing on that noise, and (below) don't fire any exit except stop-loss.
+  const minDur = mgmtConfig.minPositionDurationMin ?? 0;
+  const underMinDur = positionData.age_minutes != null && positionData.age_minutes < minDur;
+
   // Activate trailing TP once trigger threshold is reached
-  if (mgmtConfig.trailingTakeProfit && !pos.trailing_active && (pos.peak_pnl_pct ?? 0) >= mgmtConfig.trailingTriggerPct) {
+  if (!underMinDur && mgmtConfig.trailingTakeProfit && !pos.trailing_active && (pos.peak_pnl_pct ?? 0) >= mgmtConfig.trailingTriggerPct) {
     pos.trailing_active = true;
     changed = true;
     log("state", `Position ${position_address} trailing TP activated (confirmed peak: ${pos.peak_pnl_pct}%)`);
   }
 
   // Track trough (lowest PnL ever seen) — mirror of peak_pnl_pct, used by scar-recovery TP
-  if (!pnl_pct_suspicious && currentPnlPct != null && currentPnlPct < (pos.trough_pnl_pct ?? 0)) {
+  if (!underMinDur && !pnl_pct_suspicious && currentPnlPct != null && currentPnlPct < (pos.trough_pnl_pct ?? 0)) {
     pos.trough_pnl_pct = currentPnlPct;
     changed = true;
   }
@@ -398,6 +404,9 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
       reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.stopLossPct}%`,
     };
   }
+
+  // Min-duration gate: stop-loss above always fires; everything else waits out the noise window.
+  if (underMinDur) return null;
 
   // ── Scar-recovery TP ───────────────────────────────────────────
   // If position dipped to/below scarTriggerPct (deep red) but clawed back to
