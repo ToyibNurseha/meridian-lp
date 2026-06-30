@@ -801,11 +801,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
       const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
       if (!result?.positions?.length) return;
       for (const p of result.positions) {
-        // Min-duration gate: don't record peak on the post-deploy PnL phantom (else it poisons
-        // trailing TP once the gate lifts). Peak/trough/exits all resume after minPositionDurationMin.
-        if ((p.age_minutes ?? 0) >= (config.management.minPositionDurationMin ?? 0)) {
-          confirmPeak(p.position, p.pnl_pct, confirmTicks);
-        }
+        confirmPeak(p.position, p.pnl_pct, confirmTicks); // self-gates on min-duration (deployed_at)
 
         // Detect an exit signal this tick (rule-based exits, then deterministic close rules).
         const exit = updatePnlAndCheckExits(p.position, p, config.management);
@@ -1010,8 +1006,11 @@ function getDeterministicCloseRule(position, managementConfig) {
   }
   // Min-duration gate: rule 1 (stop loss) above always fires; suppress rules 2-7 while the
   // position is younger than minPositionDurationMin to avoid acting on a post-deploy PnL phantom.
+  // Age from deployed_at (reliable) — NOT position.age_minutes, which can be null/wrong at deploy.
   const _minDur = managementConfig.minPositionDurationMin ?? 0;
-  if (position.age_minutes != null && position.age_minutes < _minDur) return null;
+  if (_minDur && tracked?.deployed_at && (Date.now() - new Date(tracked.deployed_at).getTime()) / 60000 < _minDur) {
+    return null;
+  }
   if (!pnlSuspect && position.pnl_pct != null && position.pnl_pct >= managementConfig.takeProfitPct) {
     return { action: "CLOSE", rule: 2, reason: "take profit" };
   }

@@ -10,6 +10,17 @@
 
 import fs from "fs";
 import { log } from "./logger.js";
+import { config } from "./config.js";
+
+// Min-duration gate helper: true while a position is younger than minPositionDurationMin.
+// Uses deployed_at (always set at deploy, monotonic) — NOT on-chain age_minutes, which can be
+// null or wrong right after deploy and let the post-deploy PnL phantom through.
+function isUnderMinDuration(pos) {
+  const minDur = config.management?.minPositionDurationMin ?? 0;
+  if (!minDur || !pos?.deployed_at) return false;
+  const ageMin = (Date.now() - new Date(pos.deployed_at).getTime()) / 60000;
+  return ageMin < minDur;
+}
 import { repoPath } from "./repo-root.js";
 
 const STATE_FILE = repoPath("state.json");
@@ -223,6 +234,8 @@ export function confirmPeak(position_address, candidatePnlPct, confirmTicks = 2)
   const state = load();
   const pos = state.positions[position_address];
   if (!pos || pos.closed) return false;
+  // Don't record peak on the post-deploy PnL phantom — else it poisons trailing once the gate lifts.
+  if (isUnderMinDuration(pos)) return false;
 
   const currentPeak = pos.peak_pnl_pct ?? 0;
   // No new high — drop any pending peak candidate.
@@ -368,8 +381,7 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   // Min-duration gate: during the first N minutes after deploy the PnL can be a transient
   // phantom (liquidity settling / active bin re-pricing). Don't track peak/trough or activate
   // trailing on that noise, and (below) don't fire any exit except stop-loss.
-  const minDur = mgmtConfig.minPositionDurationMin ?? 0;
-  const underMinDur = positionData.age_minutes != null && positionData.age_minutes < minDur;
+  const underMinDur = isUnderMinDuration(pos);
 
   // Activate trailing TP once trigger threshold is reached
   if (!underMinDur && mgmtConfig.trailingTakeProfit && !pos.trailing_active && (pos.peak_pnl_pct ?? 0) >= mgmtConfig.trailingTriggerPct) {
