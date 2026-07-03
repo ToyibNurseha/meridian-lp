@@ -28,7 +28,7 @@ import {
 import { generateBriefing } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, getTrackedPositions, setPositionInstruction, updatePnlAndCheckExits, confirmPeak, registerExitSignal } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
-import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memory.js";
+import { recordPositionSnapshot, recallForPool, addPoolNote, getPoolMemory, lastCloseWasLoss } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
 import { stageSignals } from "./signal-tracker.js";
@@ -420,7 +420,7 @@ export async function runManagementCycle({ silent = false } = {}) {
   return mgmtReport;
 }
 
-export async function runScreeningCycle({ silent = false } = {}) {
+export async function runScreeningCycle({ silent = false, allowSkip = false } = {}) {
   if (_screeningBusy) {
     log("cron", "Screening skipped — previous cycle still running");
     return null;
@@ -698,6 +698,9 @@ STEPS:
 IMPORTANT:
 - Keep the whole report compact and highly scannable for Telegram.
       `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048, {
+        // allowSkip: don't force a deploy on step 0 (opportunity-triggered cycles) — let the LLM
+        // return NO DEPLOY for a weak/lone candidate instead of being pushed into a bad deploy.
+        noForceFirstTool: allowSkip,
         onToolStart: async ({ name }) => {
           if (name === "deploy_position") deployAttempted = true;
           await liveMessage?.toolStart(name);
@@ -899,11 +902,23 @@ Summarize the current portfolio health, total fees earned, and performance of al
         }
         if (!trigger) return;
 
+        // Respect pool memory. The opportunity poller gates only on degen (momentum), so a
+        // pumping-but-historically-losing pool would otherwise get re-triggered into a forced
+        // deploy right after the regular screen rejected it on memory (observed: LIQENG-SOL —
+        // NO DEPLOY then opportunity re-deploy 1s later). Skip pools with a losing record.
+        const mem = getPoolMemory({ pool_address: trigger.c.pool });
+        const badMemory = mem && (mem.total_deploys ?? 0) > 0 &&
+          (((mem.avg_pnl_pct ?? 0) < 0) || lastCloseWasLoss(trigger.c.pool, config.management.recentDeployLossThresholdPct));
+        if (badMemory) {
+          log("cron", `[Opportunity] skip ${trigger.c.name} — negative pool memory (avg ${mem.avg_pnl_pct ?? "?"}%, ${mem.total_deploys} deploys, last ${mem.last_outcome ?? "?"})`);
+          return;
+        }
+
         const smartTag = trigger.smart.length
           ? ` + smart wallet [${trigger.smart.map((w) => w.name || w.address?.slice(0, 4)).join(", ")}] (bar lowered ${minScore}→${floor})`
           : "";
         log("cron", `[Opportunity] ${trigger.c.name} degen ${trigger.s.toFixed(1)} >= ${trigger.smart.length ? floor : minScore}${smartTag} — triggering screening deploy decision`);
-        runScreeningCycle({ silent: true }).catch((e) => log("cron_error", `Opportunity-triggered screening failed: ${e.message}`));
+        runScreeningCycle({ silent: true, allowSkip: true }).catch((e) => log("cron_error", `Opportunity-triggered screening failed: ${e.message}`));
       } catch (e) {
         log("cron_error", `Opportunity poll failed: ${e.message}`);
       } finally {
