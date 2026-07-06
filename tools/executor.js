@@ -96,7 +96,15 @@ async function validateDeployPoolThresholds(args) {
   }
 
   const tvl = poolDetailTvl(detail);
-  const minTvl = numberOrNull(config.screening.minTvl);
+  // Curated Discord signals (fresh exotic/multiday) use the lower curated TVL floor
+  let curatedType = null;
+  try {
+    const { getFreshCuratedSignalType } = await import("./screening.js");
+    curatedType = getFreshCuratedSignalType(args.pool_address);
+  } catch { /* non-fatal */ }
+  const minTvl = curatedType
+    ? numberOrNull(config.screening.curatedMinTvl ?? config.screening.minTvl)
+    : numberOrNull(config.screening.minTvl);
   const maxTvl = numberOrNull(config.screening.maxTvl);
   if (tvl == null) {
     return {
@@ -360,6 +368,7 @@ const toolMap = {
       minFeeActiveTvlRatio: ["screening", "minFeeActiveTvlRatio"],
       excludeHighSupplyConcentration: ["screening", "excludeHighSupplyConcentration"],
       minTvl: ["screening", "minTvl"],
+      curatedMinTvl: ["screening", "curatedMinTvl"],
       maxTvl: ["screening", "maxTvl"],
       minVolume: ["screening", "minVolume"],
       minOrganic: ["screening", "minOrganic"],

@@ -75,6 +75,7 @@ export const config = {
     excludeHighSupplyConcentration: u.excludeHighSupplyConcentration ?? true,
     minFeeActiveTvlRatio: u.minFeeActiveTvlRatio ?? 0.05,
     minTvl:            u.minTvl            ?? 10_000,
+    curatedMinTvl:     u.curatedMinTvl     ?? 5_000,
     maxTvl:            u.maxTvl !== undefined ? u.maxTvl : 150_000,
     minVolume:         u.minVolume         ?? 500,
     minOrganic:        u.minOrganic        ?? 60,
@@ -356,6 +357,7 @@ export function reloadScreeningThresholds() {
     if (fresh.minMcap        != null) s.minMcap        = fresh.minMcap;
     if (fresh.maxMcap        != null) s.maxMcap        = fresh.maxMcap;
     if (fresh.minTvl         != null) s.minTvl         = fresh.minTvl;
+    if (fresh.curatedMinTvl  != null) s.curatedMinTvl  = fresh.curatedMinTvl;
     if (fresh.maxTvl         !== undefined) s.maxTvl   = fresh.maxTvl;
     if (fresh.minVolume      != null) s.minVolume      = fresh.minVolume;
     if (fresh.minBinStep     != null) s.minBinStep     = fresh.minBinStep;

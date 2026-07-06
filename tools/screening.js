@@ -156,6 +156,10 @@ function getRawPoolScreeningRejectReason(pool, s) {
   if (pool?.base_token_has_high_single_ownership === true) return "base token has high single ownership";
   if (pool?.pool_type && pool.pool_type !== "dlmm") return `pool_type ${pool.pool_type} is not dlmm`;
 
+  // Curated Discord signals (exotic/multiday channels) are human-vetted — proxy
+  // gates (age, mcap direction, TVL floor scaled) relax; economics + safety hold.
+  const curatedDiscordSignal = pool?.discord_signal &&
+    ["exotic", "multiday"].includes(pool.discord_signal_type);
   // Directional mcap exemptions for curated Discord signals: multiday picks
   // established tokens (skip maxMcap), exotic picks micro fast-plays (skip
   // minMcap). All other gates still apply; the LLM sees mcap and decides.
@@ -166,7 +170,8 @@ function getRawPoolScreeningRejectReason(pool, s) {
   if (holders == null || holders < s.minHolders) return `holders ${holders ?? "unknown"} below minHolders ${s.minHolders}`;
   if (s.minTotalLps > 0 && (pool?.total_lps == null || pool.total_lps < s.minTotalLps)) return `total_lps ${pool?.total_lps ?? "unknown"} below minTotalLps ${s.minTotalLps}`;
   if (volume == null || volume < s.minVolume) return `volume ${volume ?? "unknown"} below minVolume ${s.minVolume}`;
-  if (tvl == null || tvl < s.minTvl) return `TVL ${tvl ?? "unknown"} below minTvl ${s.minTvl}`;
+  const effectiveMinTvl = curatedDiscordSignal ? (s.curatedMinTvl ?? s.minTvl) : s.minTvl;
+  if (tvl == null || tvl < effectiveMinTvl) return `TVL ${tvl ?? "unknown"} below minTvl ${effectiveMinTvl}`;
   if (s.maxTvl != null && tvl > s.maxTvl) return `TVL ${tvl} above maxTvl ${s.maxTvl}`;
   if (binStep == null || binStep < s.minBinStep) return `bin_step ${binStep ?? "unknown"} below minBinStep ${s.minBinStep}`;
   if (binStep > s.maxBinStep) return `bin_step ${binStep} above maxBinStep ${s.maxBinStep}`;
@@ -202,11 +207,6 @@ function getRawPoolScreeningRejectReason(pool, s) {
     const hit = s.blockedTokenKeywords.find(kw => nameToCheck.includes(String(kw).toLowerCase()));
     if (hit) return `blocked token keyword (${hit})`;
   }
-  // Curated Discord signals (exotic/multiday channels) are human-vetted — the
-  // token-age window is an automated-entry quality proxy and does not apply.
-  // All other hard filters (fee/TVL floor, blacklists, PVP, bots) still do.
-  const curatedDiscordSignal = pool?.discord_signal &&
-    ["exotic", "multiday"].includes(pool.discord_signal_type);
   if (!curatedDiscordSignal && s.minTokenAgeHours != null) {
     const maxCreatedAt = Date.now() - s.minTokenAgeHours * 3_600_000;
     if (createdAt == null || createdAt > maxCreatedAt) return `token age below minTokenAgeHours ${s.minTokenAgeHours}`;
@@ -230,6 +230,30 @@ async function fetchDiscordSignalCandidates() {
 // Freshness windows for locally-captured Discord signals (discord-signals.json).
 // multiday signals stay actionable much longer than fast plays.
 const LOCAL_SIGNAL_TTL_HOURS = { multiday: 24, exotic: 2, bot: 2 };
+
+/**
+ * Return the signal_type (exotic|multiday) of a fresh local curated signal for
+ * a pool, or null. Used by the deploy safety check to apply curatedMinTvl.
+ */
+export function getFreshCuratedSignalType(poolAddress) {
+  try {
+    const file = repoPath("discord-signals.json");
+    if (!poolAddress || !fs.existsSync(file)) return null;
+    const signals = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!Array.isArray(signals)) return null;
+    const now = Date.now();
+    for (const sig of signals) {
+      if (sig?.pool_address !== poolAddress) continue;
+      if (!["exotic", "multiday"].includes(sig.signal_type)) continue;
+      const ttlH = LOCAL_SIGNAL_TTL_HOURS[sig.signal_type] ?? 2;
+      const ts = Date.parse(sig.queued_at || 0);
+      if (Number.isFinite(ts) && now - ts <= ttlH * 3_600_000) return sig.signal_type;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Read locally-captured Discord signals (written by discord-listener/) and
@@ -738,8 +762,10 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const eligible = pools
     .filter((p) => {
       const tvl = Number(p.tvl ?? p.active_tvl ?? 0);
-      if (Number.isFinite(minTvl) && minTvl > 0 && tvl < minTvl) {
-        pushFilteredReason(filteredOut, p, `TVL $${tvl} below minTvl $${minTvl}`);
+      const isCurated = p.discord_signal && ["exotic", "multiday"].includes(p.discord_signal_type);
+      const effMinTvl = isCurated ? Number(config.screening.curatedMinTvl ?? minTvl) : minTvl;
+      if (Number.isFinite(effMinTvl) && effMinTvl > 0 && tvl < effMinTvl) {
+        pushFilteredReason(filteredOut, p, `TVL $${tvl} below minTvl $${effMinTvl}`);
         return false;
       }
       if (Number.isFinite(maxTvl) && maxTvl > 0 && tvl > maxTvl) {
