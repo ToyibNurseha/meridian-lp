@@ -1901,12 +1901,16 @@ function getLoneCandidateSkipReason({ pool, sw, n, ti } = {}) {
     return `bot holders ${botPct}% above maximum ${config.screening.maxBotHoldersPct}%`;
   }
 
+  // Curated Discord signals (exotic/multiday channels) carry external conviction —
+  // they satisfy the solo-deploy conviction requirement. Hard fundamental gates
+  // above (fees, top10, bots) still apply to them.
+  const curatedSignal = pool.discord_signal && ["exotic", "multiday"].includes(pool.discord_signal_type);
   // PVP conflict needs strong conviction (degen) to deploy solo.
-  if (pool.is_pvp && !degenStrong) {
+  if (pool.is_pvp && !degenStrong && !curatedSignal) {
     return `PVP symbol conflict without strong degen conviction (degen ${degen.toFixed(1)} < ${config.screening.loneCandidateMinDegen ?? 50})`;
   }
   // Conviction: a solo deploy needs a narrative OR a strong degen score.
-  if (!hasNarrative && !degenStrong) {
+  if (!hasNarrative && !degenStrong && !curatedSignal) {
     return `only candidate has no narrative and weak degen score (${degen.toFixed(1)} < ${config.screening.loneCandidateMinDegen ?? 50})`;
   }
   return null;

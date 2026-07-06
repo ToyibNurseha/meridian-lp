@@ -156,8 +156,13 @@ function getRawPoolScreeningRejectReason(pool, s) {
   if (pool?.base_token_has_high_single_ownership === true) return "base token has high single ownership";
   if (pool?.pool_type && pool.pool_type !== "dlmm") return `pool_type ${pool.pool_type} is not dlmm`;
 
-  if (mcap == null || mcap < s.minMcap) return `mcap ${mcap ?? "unknown"} below minMcap ${s.minMcap}`;
-  if (mcap > s.maxMcap) return `mcap ${mcap} above maxMcap ${s.maxMcap}`;
+  // Directional mcap exemptions for curated Discord signals: multiday picks
+  // established tokens (skip maxMcap), exotic picks micro fast-plays (skip
+  // minMcap). All other gates still apply; the LLM sees mcap and decides.
+  const skipMinMcap = pool?.discord_signal && pool.discord_signal_type === "exotic";
+  const skipMaxMcap = pool?.discord_signal && pool.discord_signal_type === "multiday";
+  if (!skipMinMcap && (mcap == null || mcap < s.minMcap)) return `mcap ${mcap ?? "unknown"} below minMcap ${s.minMcap}`;
+  if (!skipMaxMcap && mcap != null && mcap > s.maxMcap) return `mcap ${mcap} above maxMcap ${s.maxMcap}`;
   if (holders == null || holders < s.minHolders) return `holders ${holders ?? "unknown"} below minHolders ${s.minHolders}`;
   if (s.minTotalLps > 0 && (pool?.total_lps == null || pool.total_lps < s.minTotalLps)) return `total_lps ${pool?.total_lps ?? "unknown"} below minTotalLps ${s.minTotalLps}`;
   if (volume == null || volume < s.minVolume) return `volume ${volume ?? "unknown"} below minVolume ${s.minVolume}`;
@@ -842,6 +847,9 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     const confirmedEligible = eligible.filter((pool) => {
       const confirmation = confirmationByPool.get(pool.pool);
       pool.indicator_confirmation = confirmation || null;
+      // Multiday curated signals skip the entry-timing indicator gate — they are
+      // sustained-yield picks, not momentum entries. Exotic signals keep the gate.
+      if (pool.discord_signal_type === "multiday") return true;
       if (!confirmation || confirmation.confirmed) return true;
       pushFilteredReason(filteredOut, pool, `indicator reject: ${confirmation.reason}`);
       log("screening", `Indicator rejected ${pool.name} (${pool.pool.slice(0, 8)}): ${confirmation.reason}`);

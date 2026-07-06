@@ -97,9 +97,9 @@ const CHANNEL_IDS = (process.env.DISCORD_CHANNEL_IDS || "").split(",").map(s => 
 let CHANNEL_RULES = {};
 try {
   CHANNEL_RULES = JSON.parse(fs.readFileSync(path.join(__dirname, "channels.json"), "utf8"));
-  for (const id of Object.keys(CHANNEL_RULES)) {
-    if (!CHANNEL_IDS.includes(id)) CHANNEL_IDS.push(id);
-  }
+  // channels.json is the sole source of monitored channels when present
+  CHANNEL_IDS.length = 0;
+  CHANNEL_IDS.push(...Object.keys(CHANNEL_RULES));
   console.log("Loaded channels.json:", Object.entries(CHANNEL_RULES).map(([id, r]) => id + "=#" + r.name + "(" + r.signal_type + ")").join(", "));
 } catch {
   console.log("No channels.json — legacy mode (all channels require bot author)");
