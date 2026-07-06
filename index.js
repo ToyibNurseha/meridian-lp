@@ -8,6 +8,7 @@ import { log } from "./logger.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates, degenScore } from "./tools/screening.js";
+import { fetchHonkIndex, honkSummaryLine } from "./tools/honk.js";
 import { checkRsiMacdExit } from "./tools/indicator-exit.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
@@ -584,6 +585,8 @@ export async function runScreeningCycle({ silent = false, allowSkip = false } = 
     );
 
     // Build compact candidate blocks
+    const honk = await fetchHonkIndex().catch(() => null);
+
     const candidateBlocks = passing.map(({ pool, sw, n, ti, mem }, i) => {
       const botPct = ti?.audit?.bot_holders_pct ?? "?";
       const top10Pct = ti?.audit?.top_holders_pct ?? "?";
@@ -623,6 +626,10 @@ export async function runScreeningCycle({ silent = false, allowSkip = false } = 
           smart_wallets_present: (sw?.in_pool?.length ?? 0) > 0,
           narrative_quality:     n?.narrative ? "present" : "absent",
           volatility:            pool.volatility            ?? null,
+          // Market-regime signals (Honk Index) — passive Darwin attribution
+          market_yield_1d:       honk?.yield_1d_pct         ?? null,
+          market_imb_pct:        honk?.imb_pct              ?? null,
+          market_pools:          honk?.pools                ?? null,
         });
       }
 
@@ -636,6 +643,7 @@ export async function runScreeningCycle({ silent = false, allowSkip = false } = 
     const { content } = await agentLoop(`
 SCREENING CYCLE
 ${strategyBlock}
+${honkSummaryLine(honk) ?? ""}
 Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL
 
 PRE-LOADED CANDIDATES (${passing.length} pools):

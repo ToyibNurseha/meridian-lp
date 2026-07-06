@@ -40,6 +40,10 @@ const SIGNAL_NAMES = [
   "gmgn_signal_present", // smart money/KOL/whale activity on token
   "change_1h",          // 1-hour price change from GMGN
   "candle_price_range",  // real-time volatility from 5m candle spread
+  // Market-regime signals from the Honk Index (GooseDAO) at deploy time
+  "market_yield_1d",    // aggregate 1d fees/TVL across viable DLMM pools (%)
+  "market_imb_pct",     // % of swaps concentrated in top 20% of pools
+  "market_pools",       // count of viable DLMM pools
 ];
 
 const DEFAULT_WEIGHTS = Object.fromEntries(SIGNAL_NAMES.map((s) => [s, 1.0]));
@@ -596,6 +600,12 @@ function getBaseSignalScore(signal, value, calibration = {}) {
       return bounds ? normalizeLinear(value, bounds.low, bounds.high) : normalizeLinear(value, -50, 50);
     case "candle_price_range":
       return bounds ? normalizeLinear(value, bounds.low, bounds.high) : normalizeLinear(value, 0, 25);
+    case "market_yield_1d":
+      return bounds ? normalizeLinear(value, bounds.low, bounds.high) : normalizeLinear(value, 0, 5);
+    case "market_imb_pct":
+      return bounds ? normalizeLinear(value, bounds.low, bounds.high) : normalizeLinear(value, 0, 100);
+    case "market_pools":
+      return bounds ? normalizeLinear(value, bounds.low, bounds.high) : normalizeLinear(value, 0, 100);
     default:
       return bounds ? normalizeLinear(value, bounds.low, bounds.high) : normalizeLinear(value, 0, 1);
   }
