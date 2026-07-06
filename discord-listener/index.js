@@ -54,7 +54,7 @@ function saveSignal(record) {
   fs.writeFileSync(SIGNALS_FILE, JSON.stringify(signals.slice(0, 100), null, 2));
 }
 
-async function processAddress(address, message) {
+async function processAddress(address, message, rule = { signal_type: "bot" }) {
   const result = await runPreChecks(address);
   if (!result.pass) return;
 
@@ -64,6 +64,7 @@ async function processAddress(address, message) {
     base_mint: result.base_mint,
     base_symbol: result.symbol || "?",
     signal_source: "discord",
+    signal_type: rule.signal_type || "bot",
     discord_guild: message.guild?.name || "unknown",
     discord_channel: message.channel?.name || "unknown",
     discord_author: message.author?.username || "unknown",
@@ -86,6 +87,20 @@ async function processAddress(address, message) {
 const TOKEN = process.env.DISCORD_USER_TOKEN;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
 const CHANNEL_IDS = (process.env.DISCORD_CHANNEL_IDS || "").split(",").map(s => s.trim()).filter(Boolean);
+
+// Per-channel rules: channels.json maps channelId -> { name, signal_type, require_bot_author }.
+// When present it overrides DISCORD_CHANNEL_IDS as the monitored channel set.
+let CHANNEL_RULES = {};
+try {
+  CHANNEL_RULES = JSON.parse(fs.readFileSync(path.join(__dirname, "channels.json"), "utf8"));
+  for (const id of Object.keys(CHANNEL_RULES)) {
+    if (!CHANNEL_IDS.includes(id)) CHANNEL_IDS.push(id);
+  }
+  console.log("Loaded channels.json:", Object.entries(CHANNEL_RULES).map(([id, r]) => id + "=#" + r.name + "(" + r.signal_type + ")").join(", "));
+} catch {
+  console.log("No channels.json — legacy mode (all channels require bot author)");
+}
+const DEFAULT_RULE = { signal_type: "bot", require_bot_author: true };
 
 if (!TOKEN) {
   console.error("ERROR: DISCORD_USER_TOKEN not set in ../.env");
@@ -131,9 +146,11 @@ client.on("messageCreate", async (message) => {
   if (DEBUG_AUTHORS) {
     console.log(`[debug] author="${message.author?.username}" bot=${message.author?.bot} channel=#${message.channel?.name} snippet="${(message.content || "").slice(0, 60)}"`);
   }
-  // Only process messages from target bot (case-insensitive substring match)
+  // Per-channel author rule: bot channels require the target bot; curated
+  // channels (exotic/multiday) accept any human/curator message.
+  const rule = CHANNEL_RULES[message.channelId] || DEFAULT_RULE;
   const authorName = (message.author?.username || "").toLowerCase();
-  if (!authorName.includes(TARGET_BOT_NAME.toLowerCase())) return;
+  if (rule.require_bot_author && !authorName.includes(TARGET_BOT_NAME.toLowerCase())) return;
 
   const content = message.content || "";
   const embeds = message.embeds?.map(e => `${e.title || ""} ${e.description || ""}`).join(" ") || "";
@@ -149,7 +166,7 @@ client.on("messageCreate", async (message) => {
 
   // Process each address independently (don't await — handle concurrently but logged sequentially)
   for (const addr of unique) {
-    await processAddress(addr, message);
+    await processAddress(addr, message, rule);
   }
 });
 

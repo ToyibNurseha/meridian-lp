@@ -5,6 +5,8 @@ import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown, isRecentlyDeployed, lastCloseWasLoss } from "../pool-memory.js";
 import { confirmIndicatorPreset } from "./chart-indicators.js";
 import { getAgentMeridianBase, getAgentMeridianHeaders } from "./agent-meridian.js";
+import fs from "fs";
+import { repoPath } from "../repo-root.js";
 
 const DATAPI_JUP = "https://datapi.jup.ag/v1";
 
@@ -195,11 +197,16 @@ function getRawPoolScreeningRejectReason(pool, s) {
     const hit = s.blockedTokenKeywords.find(kw => nameToCheck.includes(String(kw).toLowerCase()));
     if (hit) return `blocked token keyword (${hit})`;
   }
-  if (s.minTokenAgeHours != null) {
+  // Curated Discord signals (exotic/multiday channels) are human-vetted — the
+  // token-age window is an automated-entry quality proxy and does not apply.
+  // All other hard filters (fee/TVL floor, blacklists, PVP, bots) still do.
+  const curatedDiscordSignal = pool?.discord_signal &&
+    ["exotic", "multiday"].includes(pool.discord_signal_type);
+  if (!curatedDiscordSignal && s.minTokenAgeHours != null) {
     const maxCreatedAt = Date.now() - s.minTokenAgeHours * 3_600_000;
     if (createdAt == null || createdAt > maxCreatedAt) return `token age below minTokenAgeHours ${s.minTokenAgeHours}`;
   }
-  if (s.maxTokenAgeHours != null) {
+  if (!curatedDiscordSignal && s.maxTokenAgeHours != null) {
     const minCreatedAt = Date.now() - s.maxTokenAgeHours * 3_600_000;
     if (createdAt == null || createdAt < minCreatedAt) return `token age above maxTokenAgeHours ${s.maxTokenAgeHours}`;
   }
@@ -213,6 +220,69 @@ async function fetchDiscordSignalCandidates() {
   if (!res.ok) throw new Error(`discord signal candidates ${res.status}`);
   const data = await res.json();
   return Array.isArray(data?.candidates) ? data.candidates : [];
+}
+
+// Freshness windows for locally-captured Discord signals (discord-signals.json).
+// multiday signals stay actionable much longer than fast plays.
+const LOCAL_SIGNAL_TTL_HOURS = { multiday: 24, exotic: 2, bot: 2 };
+
+/**
+ * Read locally-captured Discord signals (written by discord-listener/) and
+ * resolve each fresh pending one to a live pool via the discovery API.
+ * Complements the Agent Meridian shared signal feed.
+ */
+async function fetchLocalDiscordSignalPools(timeframe) {
+  const file = repoPath("discord-signals.json");
+  if (!fs.existsSync(file)) return [];
+  let signals;
+  try { signals = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return []; }
+  if (!Array.isArray(signals)) return [];
+
+  const now = Date.now();
+  const fresh = signals.filter((sig) => {
+    if (!sig?.pool_address) return false;
+    const ttlH = LOCAL_SIGNAL_TTL_HOURS[sig.signal_type] ?? 2;
+    const ts = Date.parse(sig.queued_at || 0);
+    return Number.isFinite(ts) && now - ts <= ttlH * 3_600_000;
+  });
+  if (fresh.length === 0) return [];
+
+  // Dedupe by pool — newest record wins (signals are stored newest-first), count repeats
+  const byPool = new Map();
+  for (const sig of fresh) {
+    const prev = byPool.get(sig.pool_address);
+    if (prev) { prev._seen++; continue; }
+    byPool.set(sig.pool_address, { ...sig, _seen: 1 });
+  }
+
+  const entries = [...byPool.values()];
+  const details = await Promise.allSettled(
+    entries.map((sig) => fetchPoolDiscoveryDetail({ poolAddress: sig.pool_address, timeframe }))
+  );
+
+  const out = [];
+  for (let i = 0; i < entries.length; i++) {
+    const sig = entries[i];
+    const pool = details[i].status === "fulfilled" ? details[i].value : null;
+    if (!pool?.pool_address) {
+      log("screening", 'Local discord signal skipped (no live pool data): ' + (sig.base_symbol || "?") + ' ' + sig.pool_address.slice(0, 8));
+      continue;
+    }
+    out.push({
+      ...pool,
+      discord_signal: true,
+      discord_signal_count: 1,
+      discord_signal_seen_count: sig._seen,
+      discord_signal_first_seen_at: sig.queued_at || null,
+      discord_signal_last_seen_at: sig.queued_at || null,
+      discord_signal_type: sig.signal_type || "bot",
+      discord_signal_channel: sig.discord_channel || null,
+    });
+  }
+  if (out.length) {
+    log("screening", 'Local discord signals merged: ' + out.map((p) => (p.name || p.pool_address.slice(0, 8)) + '[' + p.discord_signal_type + ']').join(", "));
+  }
+  return out;
 }
 
 async function fetchPoolDiscoveryPage({ page_size, filters, timeframe, category }) {
@@ -509,7 +579,7 @@ export async function discoverPools({
       log("screening", `Discord signal fetch failed: ${error.message}`);
       return [];
     });
-    const signalPools = signalCandidates
+    const apiSignalPools = signalCandidates
       .map((candidate) => {
         const discoveryPool = candidate.discovery_pool;
         if (!discoveryPool?.pool_address) return null;
@@ -520,9 +590,20 @@ export async function discoverPools({
           discord_signal_seen_count: candidate.seen_count || 1,
           discord_signal_first_seen_at: candidate.first_seen_at || null,
           discord_signal_last_seen_at: candidate.last_seen_at || null,
+          discord_signal_type: candidate.signal_type || "bot",
         };
       })
       .filter(Boolean);
+
+    const localSignalPools = await fetchLocalDiscordSignalPools(s.timeframe).catch((error) => {
+      log("screening", 'Local discord signal fetch failed: ' + error.message);
+      return [];
+    });
+
+    // Local signals win on conflict (they carry channel-derived signal_type)
+    const signalByPool = new Map(apiSignalPools.map((pool) => [pool.pool_address, pool]));
+    for (const pool of localSignalPools) signalByPool.set(pool.pool_address, pool);
+    const signalPools = [...signalByPool.values()];
 
     if (config.screening.discordSignalMode === "only") {
       rawPools = signalPools;
@@ -540,6 +621,8 @@ export async function discoverPools({
             discord_signal_seen_count: signalPool.discord_signal_seen_count,
             discord_signal_first_seen_at: signalPool.discord_signal_first_seen_at,
             discord_signal_last_seen_at: signalPool.discord_signal_last_seen_at,
+            discord_signal_type: signalPool.discord_signal_type || "bot",
+            discord_signal_channel: signalPool.discord_signal_channel || null,
           });
         } else {
           byPool.set(signalPool.pool_address, signalPool);
@@ -847,6 +930,8 @@ function condensePool(p) {
     open_positions: p.open_positions,
     total_lps: p.total_lps,
     discord_signal: Boolean(p.discord_signal),
+    discord_signal_type: p.discord_signal_type || null,
+    discord_signal_channel: p.discord_signal_channel || null,
     discord_signal_count: p.discord_signal_count || 0,
     discord_signal_seen_count: p.discord_signal_seen_count || 0,
     discord_signal_last_seen_at: p.discord_signal_last_seen_at || null,

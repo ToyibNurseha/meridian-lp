@@ -603,6 +603,7 @@ export async function runScreeningCycle({ silent = false, allowSkip = false } = 
         `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
         pvpLine,
         `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map(w => w.name).join(", ")})` : ""}`,
+        pool.discord_signal ? `  discord_signal: ${pool.discord_signal_type || "bot"}${pool.discord_signal_channel ? ` (#${pool.discord_signal_channel})` : ""}${pool.discord_signal_type === "multiday" ? " — curated multi-day hold candidate" : pool.discord_signal_type === "exotic" ? " — curated fast-play, verify momentum is still live" : ""}` : null,
         activeBin != null ? `  active_bin: ${activeBin}` : null,
         priceChange != null ? `  1h: price${priceChange >= 0 ? "+" : ""}${priceChange}%, net_buyers=${netBuyers ?? "?"}` : null,
         n?.narrative ? `  narrative_untrusted: ${sanitizeUntrustedPromptText(n.narrative, 500)}` : `  narrative_untrusted: none`,
