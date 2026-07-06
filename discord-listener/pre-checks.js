@@ -97,7 +97,11 @@ export async function rugCheck(mint) {
     // Top 10 holders check from rugcheck
     const topHolders = data.topHolders || [];
     const top10pct = topHolders.slice(0, 10).reduce((sum, h) => sum + (h.pct || h.percentage || 0), 0);
-    if (top10pct > 60) return { pass: false, reason: `rugcheck: top10 holders ${top10pct.toFixed(1)}% > 60%` };
+    // NOTE: rugcheck's top10 includes pool/AMM accounts, so active DLMM memes
+    // often sit at 60-90%. This is a coarse garbage gate — the screener re-checks
+    // top10 at config.maxTop10Pct on the pool-excluded Jupiter audit measure.
+    const maxTop10 = Number(process.env.DISCORD_MAX_TOP10_PCT || 80);
+    if (top10pct > maxTop10) return { pass: false, reason: `rugcheck: top10 holders ${top10pct.toFixed(1)}% > ${maxTop10}%` };
     return { pass: true, rug_score: data.score || 0 };
   } catch (e) {
     // RugCheck API down or unknown token — warn but don't block
@@ -181,15 +185,15 @@ export async function runPreChecks(address) {
   }
 
   const rug = await rugCheck(pool.base_mint);
-  if (!rug.pass) { console.log(`  REJECT [rug] ${rug.reason}`); return { pass: false, ...rug, ...pool }; }
+  if (!rug.pass) { console.log(`  REJECT [rug] ${rug.reason}`); return { ...pool, ...rug, pass: false }; }
   console.log(`  OK [rug] score=${rug.rug_score ?? "n/a"}`);
 
   const deployer = await deployerCheck(pool.pool_address);
-  if (!deployer.pass) { console.log(`  REJECT [deployer] ${deployer.reason}`); return { pass: false, ...deployer, ...pool }; }
+  if (!deployer.pass) { console.log(`  REJECT [deployer] ${deployer.reason}`); return { ...pool, ...deployer, pass: false }; }
   console.log(`  OK [deployer]`);
 
   const fees = await feesCheck(pool.base_mint);
-  if (!fees.pass) { console.log(`  REJECT [fees] ${fees.reason}`); return { pass: false, ...fees, ...pool }; }
+  if (!fees.pass) { console.log(`  REJECT [fees] ${fees.reason}`); return { ...pool, ...fees, pass: false }; }
   console.log(`  OK [fees] global_fees=${fees.global_fees_sol ?? "n/a"} SOL`);
 
   console.log(`  PASS → queuing signal (token age: ${pool.token_age_minutes ?? "unknown"} min)`);

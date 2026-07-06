@@ -32,6 +32,10 @@ const SOL_ADDR_RE = /[1-9A-HJ-NP-Za-km-z]{32,44}/g;
 // Known non-address patterns to skip (short common words that match base58 range)
 const FALSE_POSITIVE_SKIP = new Set([
   "solana", "meteora", "jupiter", "raydium", "orca",
+  // Quote mints — appear in every pool embed, never a signal
+  "so11111111111111111111111111111111111111112",
+  "epjfwdd5aufqssqem2qn1xzybapc8g4weggkzwytdt1v",
+  "es9vmfrzacermjfrf4h2fyd4kconky11mcce8benwnyb",
 ]);
 
 function isLikelySolanaAddress(str) {
@@ -146,11 +150,15 @@ client.on("messageCreate", async (message) => {
   if (DEBUG_AUTHORS) {
     console.log(`[debug] author="${message.author?.username}" bot=${message.author?.bot} channel=#${message.channel?.name} snippet="${(message.content || "").slice(0, 60)}"`);
   }
-  // Per-channel author rule: bot channels require the target bot; curated
-  // channels (exotic/multiday) accept any human/curator message.
+  // Per-channel author rule: author_match is a case-insensitive substring
+  // required in the author name (null = accept any author). Legacy channels
+  // without a rule fall back to the target bot name.
   const rule = CHANNEL_RULES[message.channelId] || DEFAULT_RULE;
   const authorName = (message.author?.username || "").toLowerCase();
-  if (rule.require_bot_author && !authorName.includes(TARGET_BOT_NAME.toLowerCase())) return;
+  const authorMatch = rule.author_match !== undefined
+    ? rule.author_match
+    : (rule.require_bot_author !== false ? TARGET_BOT_NAME : null);
+  if (authorMatch && !authorName.includes(String(authorMatch).toLowerCase())) return;
 
   const content = message.content || "";
   const embeds = message.embeds?.map(e => `${e.title || ""} ${e.description || ""}`).join(" ") || "";

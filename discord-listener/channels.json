@@ -1,6 +1,22 @@
 {
-  "1432258678261547069": { "name": "degen-dlmm", "signal_type": "bot", "require_bot_author": true },
-  "1433044133798351019": { "name": "metlex-dlmm-bot", "signal_type": "bot", "require_bot_author": true },
-  "1434848429720469625": { "name": "dlmm-exotic-opps", "signal_type": "exotic", "require_bot_author": false },
-  "1434848394148315236": { "name": "dlmm-multiday-opps", "signal_type": "multiday", "require_bot_author": false }
+  "1432258678261547069": {
+    "name": "degen-dlmm",
+    "signal_type": "bot",
+    "author_match": "metlex"
+  },
+  "1433044133798351019": {
+    "name": "metlex-dlmm-bot",
+    "signal_type": "bot",
+    "author_match": "metlex"
+  },
+  "1434848429720469625": {
+    "name": "dlmm-exotic-opps",
+    "signal_type": "exotic",
+    "author_match": null
+  },
+  "1434848394148315236": {
+    "name": "dlmm-multiday-opps",
+    "signal_type": "multiday",
+    "author_match": null
+  }
 }
