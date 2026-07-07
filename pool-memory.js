@@ -54,6 +54,8 @@ function isAdjustedWinRateExcludedReason(reason) {
 function isFeeGeneratingDeploy(deploy) {
   const minFeeEarnedPct = Number(config.management.repeatDeployCooldownMinFeeEarnedPct ?? 0);
   const feeEarnedPct = Number(deploy.fee_earned_pct ?? 0);
+  // When minFeeEarnedPct <= 0, every closed deploy counts regardless of actual fees earned
+  if (minFeeEarnedPct <= 0) return Number.isFinite(feeEarnedPct);
   const feesUsd = Number(deploy.fees_earned_usd ?? 0);
   const feesSol = Number(deploy.fees_earned_sol ?? 0);
   const hasFees = (Number.isFinite(feesUsd) && feesUsd > 0) || (Number.isFinite(feesSol) && feesSol > 0);
