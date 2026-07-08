@@ -674,7 +674,7 @@ export async function discoverPools({
   const thresholdedRawPools = rawPools.filter((pool) => {
     const reason = getRawPoolScreeningRejectReason(pool, s);
     if (!reason) return true;
-    filteredExamples.push({ name: pool.name || pool.pool_address || "unknown pool", reason });
+    filteredExamples.push({ name: pool.name || pool.pool_address || "unknown pool", reason, discord_signal: pool.discord_signal === true });
     if (pool.discord_signal) log("screening", `Discord signal filtered: ${pool.name || pool.pool_address} — ${reason}`);
     return false;
   });
@@ -890,7 +890,12 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   return {
     candidates: eligible,
     total_screened: pools.length,
-    filtered_examples: filteredOut.slice(0, 3),
+    // Curated Discord signals are human-vetted — always surface why they were
+    // filtered instead of letting generic rejects crowd them out of the cap.
+    filtered_examples: [
+      ...filteredOut.filter((f) => f.discord_signal),
+      ...filteredOut.filter((f) => !f.discord_signal),
+    ].slice(0, 8),
   };
 }
 
@@ -1005,5 +1010,6 @@ function pushFilteredReason(list, pool, reason) {
   list.push({
     name: pool.name || `${pool.base?.symbol || "?"}-${pool.quote?.symbol || "?"}`,
     reason,
+    discord_signal: pool.discord_signal === true,
   });
 }
