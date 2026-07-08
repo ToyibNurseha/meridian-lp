@@ -212,6 +212,11 @@ function coerceString(value, key) {
 }
 
 function coerceStringArray(value, key) {
+  // Accept comma-separated strings so Telegram /setcfg works without JSON
+  // quoting (clients rewrite straight quotes to smart quotes, breaking JSON).
+  if (typeof value === "string") {
+    value = value.split(",").map((entry) => entry.trim()).filter(Boolean);
+  }
   if (!Array.isArray(value)) throw new Error(`${key} must be an array of strings`);
   return value.map((entry) => coerceString(entry, key)).filter(Boolean);
 }
@@ -235,7 +240,7 @@ function normalizeConfigValue(key, value) {
     "chartIndicatorsEnabled",
     "requireAllIntervals",
   ]);
-  const arrayKeys = new Set(["allowedLaunchpads", "blockedLaunchpads", "blockedTokenKeywords"]);
+  const arrayKeys = new Set(["allowedLaunchpads", "blockedLaunchpads", "blockedTokenKeywords", "indicatorIntervals"]);
   const stringKeys = new Set([
     "timeframe",
     "category",
