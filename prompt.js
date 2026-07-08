@@ -125,16 +125,7 @@ DEPLOY RULES:
 - Bin steps must be [${s.minBinStep}-${s.maxBinStep}].
 - Pick ONE pool only when conviction is real. If only one weak candidate survives, skip and explain why none qualify.
 
-STRATEGY SELECTION (dynamic — use recommended_strategy as your primary signal):
-Each candidate has a recommended_strategy field ("spot" or "bid_ask") and a strategy_reason. Follow it unless you have a strong counter-reason.
-
-- "spot" recommended (pump): token in active pump + volume surge. Deploy spot — uniform distribution. Place range BELOW current price to capture the exit wave. Price rips up then dumps back through your range — spot catches the full sweep. bid_ask would miss it (concentrated too high). Widen bins_below toward maxBinsBelow. Be patient, don't close on brief OOR.
-- "spot" recommended (dump): token has dumped significantly but volume is still active. Deploy spot at the current dip price — uniform distribution captures the recovery bounce as price sweeps back up. Hold through brief OOR, the bounce fills your bins.
-- "bid_ask" recommended: stable/oscillating market. Price moves around a central point. bid_ask concentrates fees at current price, catches both buy and sell volume. Use volatility-scaled bins_below.
-
-WHEN TO OVERRIDE:
-- Candidate is "bid_ask" but you see clear pump signals (massive volume spike, price still running) → use spot instead.
-- Candidate is "spot" but volume is already cooling and price is reversing → use bid_ask to catch the two-way fees.
+STRATEGY: Always deploy bid_ask. Concentrates fees at current price — catches two-way volume on oscillating/dumped tokens. Use volatility-scaled bins_below.
 
 ${weightsSummary ? `${weightsSummary}\nPrioritize candidates whose strongest attributes align with high-weight signals.\n\n` : ""}${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOString()}
 `;

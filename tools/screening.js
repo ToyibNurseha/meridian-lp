@@ -864,31 +864,6 @@ function condensePool(p) {
     swap_count: p.swap_count,
     unique_traders: p.unique_traders,
 
-    // Strategy recommendation based on price action
-    // LLM uses this as a strong hint but can override with reasoning.
-    recommended_strategy: (() => {
-      const priceChange = Number(p.pool_price_change_pct ?? 0);
-      const volumeChange = Number(p.volume_change_pct ?? 0);
-      const volume = Number(p.volume ?? 0);
-      const pumpThreshold = Number(config.screening.pumpSpotThresholdPct ?? 15);
-      const dumpThreshold = Number(config.screening.dumpSpotThresholdPct ?? 15);
-      if (priceChange > pumpThreshold && volumeChange > 0) return "spot";
-      if (priceChange < -dumpThreshold && volume > 0) return "spot";
-      return "bid_ask";
-    })(),
-    strategy_reason: (() => {
-      const priceChange = Number(p.pool_price_change_pct ?? 0);
-      const volumeChange = Number(p.volume_change_pct ?? 0);
-      const volume = Number(p.volume ?? 0);
-      const pumpThreshold = Number(config.screening.pumpSpotThresholdPct ?? 15);
-      const dumpThreshold = Number(config.screening.dumpSpotThresholdPct ?? 15);
-      if (priceChange > pumpThreshold && volumeChange > 0)
-        return `pump +${priceChange.toFixed(1)}% + volume surge — place range below, wait for exit wave`;
-      if (priceChange < -dumpThreshold && volume > 0)
-        return `dump ${priceChange.toFixed(1)}% + volume still active — spot at dip, wait for recovery bounce`;
-      return "stable/reversal — bid_ask catches fees both directions";
-    })(),
-
     // Liquidity-relative + LP-activity metrics (Degen Score inputs)
     volume_active_tvl_ratio: p.volume_active_tvl_ratio != null ? fix(p.volume_active_tvl_ratio, 4) : null,
     unique_lps: p.unique_lps,
