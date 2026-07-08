@@ -94,14 +94,23 @@ export async function rugCheck(mint) {
     const data = res.data;
     if (data.rugged) return { pass: false, reason: "rugcheck: token is rugged" };
     if ((data.score || 0) > 50000) return { pass: false, reason: `rugcheck: score too high (${data.score})` };
-    // Top 10 holders check from rugcheck
-    const topHolders = data.topHolders || [];
+    // Top 10 holders check from rugcheck, excluding accounts rugcheck itself
+    // tags as AMM pools / lockers (raw top10 on active DLMM memes sits at
+    // 60-90% because pool reserves dominate — GMGN/Jupiter exclude them too).
+    // Still a coarse garbage gate — the screener re-checks top10 at
+    // config.maxTop10Pct on the pool-excluded Jupiter audit measure.
+    const knownAccounts = data.knownAccounts || {};
+    const poolAccounts = new Set(
+      Object.entries(knownAccounts)
+        .filter(([, v]) => ["AMM", "LOCKER"].includes(v?.type))
+        .map(([addr]) => addr)
+    );
+    const topHolders = (data.topHolders || []).filter(
+      (h) => !poolAccounts.has(h.address) && !poolAccounts.has(h.owner)
+    );
     const top10pct = topHolders.slice(0, 10).reduce((sum, h) => sum + (h.pct || h.percentage || 0), 0);
-    // NOTE: rugcheck's top10 includes pool/AMM accounts, so active DLMM memes
-    // often sit at 60-90%. This is a coarse garbage gate — the screener re-checks
-    // top10 at config.maxTop10Pct on the pool-excluded Jupiter audit measure.
     const maxTop10 = Number(process.env.DISCORD_MAX_TOP10_PCT || 80);
-    if (top10pct > maxTop10) return { pass: false, reason: `rugcheck: top10 holders ${top10pct.toFixed(1)}% > ${maxTop10}%` };
+    if (top10pct > maxTop10) return { pass: false, reason: `rugcheck: top10 holders ${top10pct.toFixed(1)}% > ${maxTop10}% (pools excluded)` };
     return { pass: true, rug_score: data.score || 0 };
   } catch (e) {
     // RugCheck API down or unknown token — warn but don't block
