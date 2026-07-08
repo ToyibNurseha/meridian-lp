@@ -474,7 +474,12 @@ export async function deployPosition({
   entry_holders,
 }) {
   pool_address = normalizeMint(pool_address);
-  const activeStrategy = strategy || config.strategy.strategy;
+  // Strategy is fixed by config — the LLM arg is advisory only and ignored
+  // when it disagrees, so prompt drift can never flip the liquidity shape.
+  const activeStrategy = config.strategy.strategy;
+  if (strategy && strategy !== activeStrategy) {
+    log("dlmm", `deploy strategy override ignored: LLM asked "${strategy}", config fixes "${activeStrategy}"`);
+  }
   let activeBinsBelow = bins_below ?? config.strategy.defaultBinsBelow ?? config.strategy.minBinsBelow;
   let activeBinsAbove = bins_above ?? 0;
   const parsedVolatility = volatility == null ? null : Number(volatility);

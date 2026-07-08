@@ -481,7 +481,7 @@ export async function runScreeningCycle({ silent = false, allowSkip = false } = 
     // Load active strategy
     const activeStrategy = getActiveStrategy();
     const deployStrategy = config.strategy.strategy;
-    const strategyBlock = `DEPLOY STRATEGY: dynamic (default: ${deployStrategy}) — use each candidate's recommended_strategy field ("spot" or "bid_ask") as primary signal | bins_above: 0 (FIXED — never change) | deposit: SOL only (amount_y, amount_x=0)`
+    const strategyBlock = `DEPLOY STRATEGY: ${deployStrategy} (FIXED — never change) | bins_above: 0 (FIXED — never change) | deposit: SOL only (amount_y, amount_x=0)`
       + (activeStrategy ? `\nSTRATEGY CONTEXT: ${activeStrategy.name} — entry: ${activeStrategy.entry?.condition || "n/a"} | exit: ${activeStrategy.exit?.notes || "n/a"} | best for: ${activeStrategy.best_for}` : "");
 
     // Fetch top candidates, then recon each sequentially with a small delay to avoid 429s
